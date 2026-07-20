@@ -1,7 +1,46 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "synapticdb"
 version = "0.1.0"
-description = "Add your description here"
+description = "A single-file memory store for AI agents where recall gets smarter with use."
 readme = "README.md"
-requires-python = ">=3.11"
-dependencies = []
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Xavier Hillman" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Typing :: Typed",
+]
+dependencies = [
+    "numpy>=1.24",
+    "pydantic>=2,<3",
+]
+
+[project.optional-dependencies]
+embeddings = [
+    "sentence-transformers>=3.4,<4",
+]
+bench = [
+    "faiss-cpu>=1.10",
+    "rank-bm25>=0.2.2",
+    "sentence-transformers>=3.4,<4",
+]
+dev = [
+    "build>=1.2",
+    "pytest>=8",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
