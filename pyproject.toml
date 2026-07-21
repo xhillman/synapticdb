@@ -31,7 +31,13 @@ embeddings = [
 bench = [
     "faiss-cpu>=1.10",
     "rank-bm25>=0.2.2",
+    "scikit-learn>=1.5",
     "sentence-transformers>=3.4,<4",
+    # The archived baseline was produced on this cross-encoder runtime. Newer
+    # torch releases have returned NaN logits for the locked model on macOS.
+    "torch==2.3.1",
+    "transformers==4.41.2",
+    "tokenizers==0.19.1",
 ]
 dev = [
     "build>=1.2",

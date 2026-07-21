@@ -1,0 +1,19 @@
+{
+  "counts": {
+    "associative_queries": 5,
+    "direct_queries": 5,
+    "memories": 50,
+    "warmup_events": 6
+  },
+  "generator": {
+    "name": "bench.generate_dataset",
+    "version": 1
+  },
+  "profile": "smoke",
+  "sha256": {
+    "memories.jsonl": "d7b829ddec8153bf83dfc1576daf664c59f6098b9b01a82ce73e1f1f2ae3794e",
+    "queries.jsonl": "626cec7644e202ebffea28e6f8eeaa7b5bf578511d49f7f91a16b5c88b1689a7",
+    "schedule.jsonl": "0fe864b00dd5800772e1e98ae8ec5bd5e0b76fe41b7b20464ffe6c2edb281d2d",
+    "warmup.jsonl": "4738f2db1c00ccaac832d139401bb5f81de7dba5be95b59abdb5e2c6e29520e7"
+  }
+}

@@ -19,6 +19,9 @@ dist/
 .mypy_cache/
 .ruff_cache/
 
+# Local benchmark outputs and downloaded model caches
+bench/artifacts/
+
 # Editors and operating systems
 .idea/
 .vscode/
