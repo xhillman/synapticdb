@@ -19,6 +19,7 @@ class ScriptedRetriever:
         self.ingested: Sequence[MemoryRecord] = ()
         self.feedback_count = 0
         self.feedback_values: list[bool] = []
+        self.closed = False
 
     def ingest(self, memories: Sequence[MemoryRecord], *, seed: int) -> None:
         del seed
@@ -32,6 +33,9 @@ class ScriptedRetriever:
         del retrieval
         self.feedback_count += 1
         self.feedback_values.append(positive)
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def test_smoke_benchmark_runs_end_to_end_without_model_dependencies() -> None:
@@ -71,6 +75,8 @@ def test_warmup_uses_query_level_positive_and_negative_feedback() -> None:
     )
     assert baseline.feedback_values == [True, True, True, True, True, False]
     assert candidate.feedback_values == baseline.feedback_values
+    assert baseline.closed
+    assert candidate.closed
 
 
 def test_unique_win_requires_target_baseline_miss_and_path_evidence() -> None:

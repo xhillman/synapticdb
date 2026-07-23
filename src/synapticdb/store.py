@@ -62,6 +62,36 @@ class SearchHit:
     score: float
 
 
+@dataclass(frozen=True, slots=True)
+class GraphSummary:
+    memory_count: int
+    edge_count: int
+    average_edge_weight: float
+    average_reinforcement_count: float
+    semantic_edges: int
+    temporal_edges: int
+    co_retrieval_edges: int
+    explicit_edges: int
+
+    def edges_by_origin(self) -> dict[EdgeOrigin, int]:
+        return {
+            "semantic": self.semantic_edges,
+            "temporal": self.temporal_edges,
+            "co_retrieval": self.co_retrieval_edges,
+            "explicit": self.explicit_edges,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedQuery:
+    identifier: UUID
+    text: str
+    created_at: datetime
+    result_ids: tuple[str, ...]
+    energies: dict[str, float]
+    path_edge_ids: tuple[str, ...]
+
+
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
@@ -299,6 +329,35 @@ class Store:
         ).fetchone()
         return None if row is None else int(row["value"])
 
+    def graph_summary(self) -> GraphSummary:
+        self._require_open()
+        row = self._connection.execute(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM memories) AS memory_count,
+                COUNT(*) AS edge_count,
+                COALESCE(AVG(weight), 0.0) AS average_edge_weight,
+                COALESCE(AVG(reinforcement_count), 0.0) AS average_reinforcement_count,
+                COALESCE(SUM(origin = 'semantic'), 0) AS semantic_edges,
+                COALESCE(SUM(origin = 'temporal'), 0) AS temporal_edges,
+                COALESCE(SUM(origin = 'co_retrieval'), 0) AS co_retrieval_edges,
+                COALESCE(SUM(origin = 'explicit'), 0) AS explicit_edges
+            FROM edges
+            """
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("graph summary query returned no row")
+        return GraphSummary(
+            memory_count=int(row["memory_count"]),
+            edge_count=int(row["edge_count"]),
+            average_edge_weight=float(row["average_edge_weight"]),
+            average_reinforcement_count=float(row["average_reinforcement_count"]),
+            semantic_edges=int(row["semantic_edges"]),
+            temporal_edges=int(row["temporal_edges"]),
+            co_retrieval_edges=int(row["co_retrieval_edges"]),
+            explicit_edges=int(row["explicit_edges"]),
+        )
+
     def insert_edge(
         self,
         first_id: UUID,
@@ -406,31 +465,43 @@ class Store:
         created_at: datetime | None = None,
     ) -> QueryRow:
         self._require_open()
-        results = _uuid_texts(result_ids, "result_ids")
-        stored_energies = _prepare_energies(energies)
-        paths = _string_ids(path_edge_ids, "path_edge_ids")
-        _require_result_energies(results, stored_energies)
-        identifier = query_id or uuid4()
-        timestamp = _require_utc(created_at or _utc_now(), "created_at")
+        prepared = _prepare_query(text, result_ids, energies, path_edge_ids, query_id, created_at)
         with self._connection:
-            self._connection.execute(
-                """
-                INSERT INTO queries (
-                    id, text, created_at, result_ids, energies,
-                    path_edge_ids, feedback
-                ) VALUES (?, ?, ?, ?, ?, ?, NULL)
-                """,
-                (
-                    str(identifier),
-                    text,
-                    timestamp.isoformat(),
-                    _encode_json(list(results), "result_ids"),
-                    _encode_json(stored_energies, "energies"),
-                    _encode_json(list(paths), "path_edge_ids"),
-                ),
-            )
-            row = self._required_query_row(identifier)
+            self._insert_query(prepared)
+            row = self._required_query_row(prepared.identifier)
         return _query_from_row(row)
+
+    def record_recall(
+        self,
+        text: str,
+        result_ids: Sequence[UUID],
+        energies: Mapping[UUID, float],
+        path_edge_ids: Sequence[str],
+        *,
+        query_id: UUID | None = None,
+        recorded_at: datetime | None = None,
+    ) -> tuple[QueryRow, tuple[Memory, ...]]:
+        """Persist query evidence and update returned memories in one transaction."""
+        self._require_open()
+        timestamp = _require_utc(recorded_at or _utc_now(), "recorded_at")
+        prepared = _prepare_query(text, result_ids, energies, path_edge_ids, query_id, timestamp)
+        identifiers = prepared.result_ids
+        with self._connection:
+            self._require_memory_ids(identifiers)
+            self._insert_query(prepared)
+            if identifiers:
+                placeholders = ",".join("?" for _ in identifiers)
+                self._connection.execute(
+                    f"""
+                    UPDATE memories
+                    SET access_count = access_count + 1, last_accessed_at = ?
+                    WHERE id IN ({placeholders})
+                    """,
+                    (timestamp.isoformat(), *identifiers),
+                )
+            query_row = self._required_query_row(prepared.identifier)
+            memory_rows = tuple(self._required_memory_row(UUID(identifier)) for identifier in identifiers)
+        return _query_from_row(query_row), tuple(_memory_from_row(row) for row in memory_rows)
 
     def get_query(self, query_id: UUID) -> QueryRow:
         self._require_open()
@@ -522,6 +593,24 @@ class Store:
         if row is None:
             raise NotFoundError(f"unknown memory_id: {memory_id}")
         return cast(sqlite3.Row, row)
+
+    def _insert_query(self, query: _PreparedQuery) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO queries (
+                id, text, created_at, result_ids, energies,
+                path_edge_ids, feedback
+            ) VALUES (?, ?, ?, ?, ?, ?, NULL)
+            """,
+            (
+                str(query.identifier),
+                query.text,
+                query.created_at.isoformat(),
+                _encode_json(list(query.result_ids), "result_ids"),
+                _encode_json(query.energies, "energies"),
+                _encode_json(list(query.path_edge_ids), "path_edge_ids"),
+            ),
+        )
 
     def _required_edge_row(self, edge_id: str) -> sqlite3.Row:
         row = self._connection.execute(
@@ -720,6 +809,23 @@ def _prepare_energies(energies: Mapping[UUID, float]) -> dict[str, float]:
             raise InvalidArgumentError("energies must be finite nonnegative values")
         prepared[str(memory_id)] = value
     return prepared
+
+
+def _prepare_query(
+    text: str,
+    result_ids: Sequence[UUID],
+    energies: Mapping[UUID, float],
+    path_edge_ids: Sequence[str],
+    query_id: UUID | None,
+    created_at: datetime | None,
+) -> _PreparedQuery:
+    results = _uuid_texts(result_ids, "result_ids")
+    stored_energies = _prepare_energies(energies)
+    paths = _string_ids(path_edge_ids, "path_edge_ids")
+    _require_result_energies(results, stored_energies)
+    identifier = query_id or uuid4()
+    timestamp = _require_utc(created_at or _utc_now(), "created_at")
+    return _PreparedQuery(identifier, text, timestamp, results, stored_energies, paths)
 
 
 def _require_result_energies(result_ids: tuple[str, ...], energies: Mapping[str, float]) -> None:

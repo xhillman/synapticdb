@@ -12,7 +12,7 @@ from .contracts import MAX_SEED_COUNT, MAX_SEED_TEXT_CHARS, MAX_TOP_K
 from .dataset import load_dataset
 from .protocol import run_benchmark
 from .reporting import render_markdown, write_report
-from .retrievers import FixtureRetriever, Retriever
+from .retrievers import FixtureRetriever, Retriever, SynapticRetriever, _fixture_embedding
 
 ROOT = Path(__file__).resolve().parent
 
@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=("smoke", "full"), default="full")
-    parser.add_argument("--retriever", choices=("fixture", "baseline"), default="baseline")
+    parser.add_argument("--retriever", choices=("fixture", "baseline", "synaptic"), default="baseline")
     parser.add_argument("--seeds", default="1337", help="Comma-separated deterministic seeds")
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--output-dir", default=str(ROOT / "artifacts"))
@@ -55,6 +55,11 @@ def main() -> int:
     factories: dict[str, Callable[[], Retriever]] = {
         "fixture": FixtureRetriever,
         "baseline": LockedBaseline,
+        "synaptic": (
+            (lambda: SynapticRetriever(_fixture_embedding, embedding_name="fixture"))
+            if args.profile == "smoke"
+            else SynapticRetriever
+        ),
     }
     selected = factories[args.retriever]
     reference = FixtureRetriever if args.profile == "smoke" else LockedBaseline

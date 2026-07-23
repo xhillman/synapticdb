@@ -141,6 +141,17 @@ class LockedBaseline:
         if not isinstance(retrieval, Retrieval) or not isinstance(positive, bool):
             raise TypeError("feedback requires a Retrieval and boolean positive value")
 
+    def close(self) -> None:
+        self._ready = False
+        self._np = None
+        self._doc_ids = []
+        self._doc_text = {}
+        self._tokens = {}
+        self._bm25 = None
+        self._vectorizer = None
+        self._index = None
+        self._reranker = None
+
     def _keyword(self, text: str) -> list[tuple[str, float]]:
         scores = self._bm25.get_scores(list(_tokenize(text)))
         if len(scores) != len(self._doc_ids):

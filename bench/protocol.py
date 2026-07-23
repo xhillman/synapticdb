@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import platform
+import subprocess
 import sys
 import time
 from collections.abc import Callable
+from contextlib import ExitStack
 from dataclasses import asdict, dataclass
 from importlib import metadata
+from pathlib import Path
 from typing import Any
 
 from .contracts import MAX_MEMORY_COUNT, MAX_QUERY_COUNT, MAX_SEED_COUNT, MAX_TOP_K, MAX_WARMUP_COUNT
@@ -131,32 +134,42 @@ def _execute_seed(
     expected_baseline_hits: tuple[int, int] | None,
 ) -> _Execution:
     started = time.perf_counter()
-    baseline = baseline_factory()
-    candidate = baseline if candidate_factory is None else candidate_factory()
-    baseline.ingest(dataset.memories, seed=seed)
-    if candidate is not baseline:
-        candidate.ingest(dataset.memories, seed=seed)
-    _warm(baseline, dataset, top_k)
-    if candidate is not baseline:
-        _warm(candidate, dataset, top_k)
-    baseline_results = [baseline.recall(query.text, top_k=top_k) for query in dataset.queries]
-    candidate_results = (
-        baseline_results
-        if candidate is baseline
-        else [candidate.recall(query.text, top_k=top_k) for query in dataset.queries]
-    )
-    result = _score(
-        dataset,
-        seed,
-        baseline_results,
-        candidate_results,
-        top_k=top_k,
-        required_unique_wins=required_unique_wins,
-        direct_tolerance=direct_tolerance,
-        expected_baseline_hits=expected_baseline_hits,
-        elapsed=time.perf_counter() - started,
-    )
-    return _Execution(result, baseline.name, candidate.name, _retriever_config(baseline), _retriever_config(candidate))
+    with ExitStack() as resources:
+        baseline = baseline_factory()
+        resources.callback(baseline.close)
+        candidate = baseline if candidate_factory is None else candidate_factory()
+        if candidate is not baseline:
+            resources.callback(candidate.close)
+        baseline.ingest(dataset.memories, seed=seed)
+        if candidate is not baseline:
+            candidate.ingest(dataset.memories, seed=seed)
+        _warm(baseline, dataset, top_k)
+        if candidate is not baseline:
+            _warm(candidate, dataset, top_k)
+        baseline_results = [baseline.recall(query.text, top_k=top_k) for query in dataset.queries]
+        candidate_results = (
+            baseline_results
+            if candidate is baseline
+            else [candidate.recall(query.text, top_k=top_k) for query in dataset.queries]
+        )
+        result = _score(
+            dataset,
+            seed,
+            baseline_results,
+            candidate_results,
+            top_k=top_k,
+            required_unique_wins=required_unique_wins,
+            direct_tolerance=direct_tolerance,
+            expected_baseline_hits=expected_baseline_hits,
+            elapsed=time.perf_counter() - started,
+        )
+        return _Execution(
+            result,
+            baseline.name,
+            candidate.name,
+            _retriever_config(baseline),
+            _retriever_config(candidate),
+        )
 
 
 def _validate_run_inputs(
@@ -290,8 +303,33 @@ def _retriever_config(retriever: Retriever) -> dict[str, Any]:
     return config.to_dict() if config is not None and hasattr(config, "to_dict") else {}
 
 
+def _git_commit() -> str | None:
+    """Identify the code under test; suffix -dirty when the tree has changes."""
+    cwd = Path(__file__).resolve().parent
+    try:
+        revision = subprocess.run(
+            ("git", "rev-parse", "HEAD"),
+            capture_output=True, text=True, timeout=5.0, check=False, cwd=cwd,
+        )
+        status = subprocess.run(
+            ("git", "status", "--porcelain"),
+            capture_output=True, text=True, timeout=5.0, check=False, cwd=cwd,
+        )
+    except OSError:
+        return None
+    sha = revision.stdout.strip()
+    if revision.returncode != 0 or not sha:
+        return None
+    if status.returncode == 0 and status.stdout.strip():
+        return f"{sha}-dirty"
+    return sha
+
+
 def _environment() -> dict[str, str]:
     values = {"python": sys.version.split()[0], "platform": platform.platform()}
+    commit = _git_commit()
+    if commit is not None:
+        values["commit"] = commit
     for package in (
         "faiss-cpu",
         "numpy",

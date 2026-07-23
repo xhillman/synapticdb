@@ -6,8 +6,12 @@ import hashlib
 import math
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Protocol
+from dataclasses import asdict, dataclass
+from typing import Any, Protocol
+from uuid import UUID
+
+from synapticdb import Synaptic
+from synapticdb.embeddings import EmbeddingFunction
 
 from .contracts import MAX_FIXTURE_DIMENSIONS, MAX_MEMORY_COUNT, MAX_RECORD_CHARS, MAX_TOP_K
 from .dataset import MemoryRecord
@@ -38,6 +42,8 @@ class Retriever(Protocol):
     def recall(self, text: str, *, top_k: int) -> Retrieval: ...
 
     def feedback(self, retrieval: Retrieval, *, positive: bool) -> None: ...
+
+    def close(self) -> None: ...
 
 
 class FixtureRetriever:
@@ -70,6 +76,74 @@ class FixtureRetriever:
     def feedback(self, retrieval: Retrieval, *, positive: bool) -> None:
         if not isinstance(retrieval, Retrieval) or not isinstance(positive, bool):
             raise TypeError("feedback requires a Retrieval and boolean positive value")
+
+    def close(self) -> None:
+        return
+
+
+@dataclass(frozen=True)
+class SynapticConfig:
+    embedding: str
+    activation_blend_weight: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+class SynapticRetriever:
+    """Adapt the Phase 3 public API to benchmark-owned memory IDs."""
+
+    name = "synaptic"
+
+    def __init__(
+        self,
+        embedding_fn: EmbeddingFunction | None = None,
+        *,
+        embedding_name: str = "default",
+    ) -> None:
+        if not embedding_name:
+            raise ValueError("embedding_name must be non-empty")
+        self.config = SynapticConfig(embedding=embedding_name)
+        self._memory = Synaptic(":memory:", embedding_fn=embedding_fn)
+        self._benchmark_ids: dict[UUID, str] = {}
+        self._ingested = False
+
+    def ingest(self, memories: Sequence[MemoryRecord], *, seed: int) -> None:
+        # TODO(phase-5): PRD §10 requires a controlled ingestion schedule for
+        # the 600 s temporal window, but Synaptic.remember() offers no
+        # timestamp injection — ingesting in a tight loop would put every
+        # consecutive pair in-window. Add a hook before temporal learning lands.
+        del seed
+        if self._ingested:
+            raise RuntimeError("synaptic benchmark retriever only accepts one ingest")
+        if not 1 <= len(memories) <= MAX_MEMORY_COUNT:
+            raise ValueError(f"synaptic ingest accepts 1 to {MAX_MEMORY_COUNT} memories")
+        if len({memory.benchmark_id for memory in memories}) != len(memories):
+            raise ValueError("synaptic memory IDs must be unique")
+        for record in memories:
+            memory = self._memory.remember(record.content, record.metadata)
+            self._benchmark_ids[memory.id] = record.benchmark_id
+        if len(self._benchmark_ids) != len(memories):
+            raise RuntimeError("benchmark corpus contains duplicate memory content")
+        self._ingested = True
+
+    def recall(self, text: str, *, top_k: int) -> Retrieval:
+        if not self._ingested:
+            raise RuntimeError("synaptic retriever must be ingested before recall")
+        result = self._memory.recall(text, top_k=top_k)
+        try:
+            ranked = tuple(self._benchmark_ids[item.memory.id] for item in result.memories)
+        except KeyError as exc:
+            raise RuntimeError("Synaptic returned an unknown benchmark memory") from exc
+        return Retrieval(ranked, query_id=str(result.query_id))
+
+    def feedback(self, retrieval: Retrieval, *, positive: bool) -> None:
+        if not isinstance(retrieval, Retrieval) or not isinstance(positive, bool):
+            raise TypeError("feedback requires a Retrieval and boolean positive value")
+        # Phase 3 intentionally has no learning. Warm-up feedback is a no-op.
+
+    def close(self) -> None:
+        self._memory.close()
 
 
 def _fixture_embedding(text: str, dimensions: int = 128) -> tuple[float, ...]:

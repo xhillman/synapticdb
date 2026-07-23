@@ -188,6 +188,26 @@ def test_bulk_edge_update_rolls_back_on_unknown_edge(store: Store) -> None:
     assert updated.reinforcement_count == 1
 
 
+def test_graph_summary_reports_counts_averages_and_origins(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    third_id = remember(store, "third")
+    semantic = store.insert_edge(first_id, second_id, 0.25, "semantic")
+    store.insert_edge(second_id, third_id, 0.75, "explicit")
+    store.bulk_update_edge_weights(((semantic.id, 0.5),))
+    summary = store.graph_summary()
+    assert summary.memory_count == 3
+    assert summary.edge_count == 2
+    assert summary.average_edge_weight == pytest.approx(0.625)
+    assert summary.average_reinforcement_count == pytest.approx(0.5)
+    assert summary.edges_by_origin() == {
+        "semantic": 1,
+        "temporal": 0,
+        "co_retrieval": 0,
+        "explicit": 1,
+    }
+
+
 def test_query_roundtrip_and_feedback(store: Store) -> None:
     first_id = remember(store, "first")
     second_id = remember(store, "second")
@@ -209,6 +229,40 @@ def test_query_roundtrip_and_feedback(store: Store) -> None:
     assert updated.feedback == 1
     with pytest.raises(InvalidArgumentError, match="already recorded"):
         store.set_query_feedback(query.id, -1)
+
+
+def test_record_recall_persists_query_and_bumps_access_atomically(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    recorded_at = datetime(2026, 7, 23, 15, 30, tzinfo=timezone.utc)
+    query, memories = store.record_recall(
+        "related facts",
+        (second_id, first_id),
+        {second_id: 1.0, first_id: 0.4},
+        (),
+        recorded_at=recorded_at,
+    )
+    assert query.result_ids == (second_id, first_id)
+    assert [memory.id for memory in memories] == [second_id, first_id]
+    assert all(memory.access_count == 1 for memory in memories)
+    assert all(memory.last_accessed_at == recorded_at for memory in memories)
+
+
+def test_record_recall_rolls_back_when_a_memory_is_unknown(store: Store) -> None:
+    memory_id = remember(store, "first")
+    unknown_id = uuid4()
+    query_id = uuid4()
+    with pytest.raises(NotFoundError):
+        store.record_recall(
+            "related facts",
+            (memory_id, unknown_id),
+            {memory_id: 1.0, unknown_id: 0.5},
+            (),
+            query_id=query_id,
+        )
+    with pytest.raises(NotFoundError):
+        store.get_query(query_id)
+    assert store.get_memory(memory_id).access_count == 0
 
 
 def test_query_validation_rejects_incomplete_data(store: Store) -> None:

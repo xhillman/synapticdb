@@ -13,6 +13,7 @@ Run the dependency-free CI profile:
 
 ```bash
 python -m bench --profile smoke --retriever fixture --check
+python -m bench --profile smoke --retriever synaptic --check
 ```
 
 Install the full stack and reproduce the canonical baseline:
@@ -36,7 +37,26 @@ The candidate gate, used once the Synaptic adapter exists, requires direct
 recall within five percentage points of the baseline and at least 10/25
 path-backed associative unique wins on every requested seed.
 
+Canonical results live in `bench/records/`, one directory per promoted run
+(`report.md` + `report.json`, stamped with the git commit of the code under
+test). `bench/artifacts/` is transient and gitignored; promote a run by
+copying its artifact directory into `bench/records/`. Every PR that changes
+retrieval, learning, or parameter defaults includes a before/after table
+diffed against the latest committed record.
+
+The Phase 3 pre-learning baseline is `bench/records/phase3-prelearning/`,
+produced by:
+
+```bash
+python -m bench --profile full --retriever synaptic --run-id phase3-prelearning
+```
+
+On synthetic dataset version 1 with seed 1337, Phase 3 returned 25/25 direct
+hits and 17/25 associative hits. Path-backed unique wins remained 0/25 because
+activation does not exist yet. The full learning gate therefore fails as
+expected until later phases add association paths.
+
 Gold relevance IDs, required path IDs, and corpus `linked_memory_ids` are
-owned by the evaluator. Retriever implementations receive none of them. A
-Synaptic adapter reports `path_benchmark_ids` by translating the endpoints of
-its stored `path_edge_ids` back through the UUID-to-benchmark-ID map.
+owned by the evaluator. Retriever implementations receive none of them. Phase
+3 reports no `path_benchmark_ids`. Activation will translate stored path
+evidence through the UUID-to-benchmark-ID map in a later phase.

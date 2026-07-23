@@ -4,8 +4,28 @@ SynapticDB is a single-file memory store for AI agents where recall gets
 smarter with use. It combines keyword and semantic search with a graph of
 associations learned from how memories are stored and retrieved.
 
-> **Status:** SynapticDB is an early v0 rebuild and does not yet expose its
-> public memory API.
+> **Status:** The v0 walking skeleton supports durable hybrid search. Graph
+> activation and learning are still under development.
+
+Install the embedding-enabled package:
+
+```console
+pip install "synapticdb[embeddings]"
+```
+
+Then remember and recall:
+
+```python
+from synapticdb import Synaptic
+with Synaptic(":memory:") as memories:
+    memories.remember("Client X requires SOC2 for vendor deployments")
+    result = memories.recall("deployment requirements for Client X")
+    print(result.memories[0].memory.content)
+```
+
+Pass `embedding_fn` to `Synaptic` to use a local or hosted embedding provider.
+The function must accept a string and return a numeric sequence with a stable
+dimension.
 
 ## Development
 
@@ -19,6 +39,7 @@ uv run ruff check .
 uv run mypy
 uv run python -W error -m pytest
 uv run python -W error -m bench --profile smoke --retriever fixture --check --no-write
+uv run python -W error -m bench --profile smoke --retriever synaptic --check --no-write
 ```
 
 These checks are required in CI.

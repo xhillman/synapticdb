@@ -29,3 +29,5 @@ jobs:
         run: python -W error -m pytest
       - name: Run dependency-free benchmark smoke gate
         run: python -W error -m bench --profile smoke --retriever fixture --check --no-write
+      - name: Run Synaptic walking-skeleton smoke gate
+        run: python -W error -m bench --profile smoke --retriever synaptic --check --no-write
