@@ -418,7 +418,7 @@ class Store:
         self._require_open()
         self._require_memory_ids((str(memory_id),))
         rows = self._connection.execute(
-            "SELECT * FROM edges WHERE a = ? OR b = ? ORDER BY id",
+            "SELECT * FROM edges WHERE a = ? OR b = ? ORDER BY rowid",
             (str(memory_id), str(memory_id)),
         ).fetchall()
         return tuple(_edge_from_row(row) for row in rows)
@@ -540,7 +540,7 @@ class Store:
                     SELECT id FROM queries
                     WHERE (feedback IS NULL AND created_at < ?)
                        OR (feedback IS NOT NULL AND created_at < ?)
-                    ORDER BY created_at, id
+                    ORDER BY created_at, rowid
                     LIMIT ?
                 )
                 """,
@@ -549,6 +549,9 @@ class Store:
         return cursor.rowcount
 
     def keyword_search(self, query: str, limit: int = _CANDIDATE_LIMIT) -> tuple[SearchHit, ...]:
+        # bm25 ties break on rowid (insertion order), never on id: ids are
+        # random UUIDs, so an id tie-break reorders equal-score results on
+        # every reingest and makes benchmark runs irreproducible.
         self._require_open()
         result_limit = _positive_limit(limit, "keyword limit")
         expression = _fts_expression(query)
@@ -560,7 +563,7 @@ class Store:
             FROM memories_fts
             JOIN memories ON memories.rowid = memories_fts.rowid
             WHERE memories_fts MATCH ?
-            ORDER BY rank, memories.id
+            ORDER BY rank, memories.rowid
             LIMIT ?
             """,
             (expression, result_limit),

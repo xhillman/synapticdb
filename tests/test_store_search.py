@@ -63,6 +63,18 @@ def test_search_limits_must_be_positive(store: Store) -> None:
         store.semantic_search((1.0, 0.0), limit=0)
 
 
+def test_keyword_search_breaks_bm25_ties_by_insertion_order() -> None:
+    contents = ("alpha one", "alpha two", "alpha three")
+
+    def ranked_positions() -> list[int]:
+        with Store(":memory:") as store:
+            ids = [store.insert_memory(content, {}, (1.0, 0.0)).id for content in contents]
+            return [ids.index(hit.memory_id) for hit in store.keyword_search("alpha")]
+
+    assert ranked_positions() == [0, 1, 2]
+    assert ranked_positions() == [0, 1, 2]
+
+
 def test_keyword_search_truncates_very_long_queries(store: Store) -> None:
     needle_id = remember(store, "needle document", (1.0, 0.0))
     filler = " ".join(f"filler{index}" for index in range(80))
