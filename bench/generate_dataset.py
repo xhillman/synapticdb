@@ -2,16 +2,29 @@
 
 from __future__ import annotations
 
-from collections import Counter
-from datetime import UTC, datetime, timedelta
 import hashlib
 import json
+from collections import Counter
+from datetime import datetime, timedelta, timezone
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
+
+from .contracts import (
+    FULL_ASSOCIATIVE_QUERY_COUNT,
+    FULL_DIRECT_QUERY_COUNT,
+    FULL_MEMORY_COUNT,
+    MAX_DATA_FILE_BYTES,
+    MAX_RECORD_CHARS,
+    SMOKE_ASSOCIATIVE_QUERY_COUNT,
+    SMOKE_DIRECT_QUERY_COUNT,
+    SMOKE_MEMORY_COUNT,
+)
 
 ROOT = Path(__file__).resolve().parent / "data"
 MEMORY_TYPES = ("factual", "episodic", "procedural", "contextual")
 SOURCES = ("incident-log", "runbook", "service-ticket", "field-note")
+ChainSpec = tuple[str, str, str, str, str, str, str]
 
 
 CHAIN_SPECS = (
@@ -244,43 +257,139 @@ CHAIN_SPECS = (
 
 
 DIRECT_SPECS = (
-    ("How often must insulated transport crates receive a seal inspection?", "Insulated transport crates require a seal inspection every 90 days; damaged seals must be replaced before the next route."),
-    ("How long are grid alert acknowledgements retained?", "Grid alert acknowledgements are retained for 14 days in the operations archive."),
-    ("What resolution is required for archival map scans?", "Archival map scans must be captured at 400 DPI in lossless grayscale format."),
-    ("What is the maximum batch size for the parcel rating endpoint?", "The parcel rating endpoint accepts at most 75 shipments in one request."),
-    ("Which command verifies a greenhouse controller configuration?", "Run `grove verify --controller <id>` to validate a greenhouse controller configuration before deployment."),
-    ("What is the default campsite reservation hold period?", "Unpaid campsite reservations are held for 18 minutes before inventory is released."),
-    ("Which header carries a ferry manifest revision?", "Ferry manifest clients send the revision in the `X-Manifest-Revision` header."),
-    ("What pressure starts the aquarium backup pump?", "The aquarium backup pump starts when return-line pressure remains below 1.8 bar for ten seconds."),
-    ("How frequently are museum beacon manifests refreshed?", "Museum guide tablets refresh their offline beacon manifest every six hours."),
-    ("What color space is required for textile shade references?", "Textile shade references are stored in the CIELAB color space under D65 illumination."),
+    (
+        "How often must insulated transport crates receive a seal inspection?",
+        "Insulated transport crates require a seal inspection every 90 days; damaged seals must be replaced before the next route.",
+    ),
+    (
+        "How long are grid alert acknowledgements retained?",
+        "Grid alert acknowledgements are retained for 14 days in the operations archive.",
+    ),
+    (
+        "What resolution is required for archival map scans?",
+        "Archival map scans must be captured at 400 DPI in lossless grayscale format.",
+    ),
+    (
+        "What is the maximum batch size for the parcel rating endpoint?",
+        "The parcel rating endpoint accepts at most 75 shipments in one request.",
+    ),
+    (
+        "Which command verifies a greenhouse controller configuration?",
+        "Run `grove verify --controller <id>` to validate a greenhouse controller configuration before deployment.",
+    ),
+    (
+        "What is the default campsite reservation hold period?",
+        "Unpaid campsite reservations are held for 18 minutes before inventory is released.",
+    ),
+    (
+        "Which header carries a ferry manifest revision?",
+        "Ferry manifest clients send the revision in the `X-Manifest-Revision` header.",
+    ),
+    (
+        "What pressure starts the aquarium backup pump?",
+        "The aquarium backup pump starts when return-line pressure remains below 1.8 bar for ten seconds.",
+    ),
+    (
+        "How frequently are museum beacon manifests refreshed?",
+        "Museum guide tablets refresh their offline beacon manifest every six hours.",
+    ),
+    (
+        "What color space is required for textile shade references?",
+        "Textile shade references are stored in the CIELAB color space under D65 illumination.",
+    ),
     ("Which port is used by the depot scanner service?", "The depot scanner service listens on TCP port 7443."),
-    ("How many failed badge attempts lock a hotel staff credential?", "A hotel staff credential locks after five failed badge attempts within fifteen minutes."),
-    ("What is the wildlife camera's standard recording length?", "Wildlife cameras record a twelve-second clip for each accepted motion event."),
-    ("Which coordinate system is used for local construction plans?", "Local construction plans use the EPSG:26918 projected coordinate system."),
-    ("What is the bakery freezer's alert threshold?", "The bakery freezer raises an alert above minus 15 degrees Celsius for more than four minutes."),
-    ("How should a clinic cancellation reason be represented?", "Clinic cancellation reasons use one lowercase code from the published reason-code registry."),
-    ("When does the radio station publish its next-day playlist?", "The community radio station publishes its next-day playlist at 20:30 local time."),
-    ("What is the maximum offline queue size for relief scanners?", "Relief scanners retain up to 2,000 offline events before blocking new inventory operations."),
-    ("Which checksum protects laboratory result exports?", "Laboratory result exports include a SHA-256 checksum in the companion manifest file."),
-    ("How long may an orchard valve remain open continuously?", "An orchard irrigation valve may remain open continuously for no more than 45 minutes."),
-    ("What sample rate is required for theater accessibility audio?", "Theater accessibility audio is delivered as 48-kHz, 24-bit PCM."),
-    ("Which format is used for bicycle station identifiers?", "Bicycle station identifiers use the format `STN-` followed by six decimal digits."),
-    ("What is the recycling camera calibration interval?", "Recycling-line cameras are calibrated every 30 operating days."),
-    ("How long are university room reservations cached?", "University room reservations are cached for 120 seconds on hallway displays."),
-    ("What is the ceramic kiln's maximum programmed ramp rate?", "Ceramic kilns limit programmed heating ramps to 180 degrees Celsius per hour."),
+    (
+        "How many failed badge attempts lock a hotel staff credential?",
+        "A hotel staff credential locks after five failed badge attempts within fifteen minutes.",
+    ),
+    (
+        "What is the wildlife camera's standard recording length?",
+        "Wildlife cameras record a twelve-second clip for each accepted motion event.",
+    ),
+    (
+        "Which coordinate system is used for local construction plans?",
+        "Local construction plans use the EPSG:26918 projected coordinate system.",
+    ),
+    (
+        "What is the bakery freezer's alert threshold?",
+        "The bakery freezer raises an alert above minus 15 degrees Celsius for more than four minutes.",
+    ),
+    (
+        "How should a clinic cancellation reason be represented?",
+        "Clinic cancellation reasons use one lowercase code from the published reason-code registry.",
+    ),
+    (
+        "When does the radio station publish its next-day playlist?",
+        "The community radio station publishes its next-day playlist at 20:30 local time.",
+    ),
+    (
+        "What is the maximum offline queue size for relief scanners?",
+        "Relief scanners retain up to 2,000 offline events before blocking new inventory operations.",
+    ),
+    (
+        "Which checksum protects laboratory result exports?",
+        "Laboratory result exports include a SHA-256 checksum in the companion manifest file.",
+    ),
+    (
+        "How long may an orchard valve remain open continuously?",
+        "An orchard irrigation valve may remain open continuously for no more than 45 minutes.",
+    ),
+    (
+        "What sample rate is required for theater accessibility audio?",
+        "Theater accessibility audio is delivered as 48-kHz, 24-bit PCM.",
+    ),
+    (
+        "Which format is used for bicycle station identifiers?",
+        "Bicycle station identifiers use the format `STN-` followed by six decimal digits.",
+    ),
+    (
+        "What is the recycling camera calibration interval?",
+        "Recycling-line cameras are calibrated every 30 operating days.",
+    ),
+    (
+        "How long are university room reservations cached?",
+        "University room reservations are cached for 120 seconds on hallway displays.",
+    ),
+    (
+        "What is the ceramic kiln's maximum programmed ramp rate?",
+        "Ceramic kilns limit programmed heating ramps to 180 degrees Celsius per hour.",
+    ),
 )
 
 
 FACILITIES = (
-    "Alder Workshop", "Bramble Depot", "Cobalt Annex", "Dovetail Hall", "Elm Test Yard",
-    "Frostline Store", "Garnet Studio", "Hazel Pavilion", "Ivory Field Office", "Jasper Warehouse",
-    "Kingfisher Lab", "Lilac Terminal", "Mica Service Bay", "Nectar Greenhouse", "Osprey Archive",
+    "Alder Workshop",
+    "Bramble Depot",
+    "Cobalt Annex",
+    "Dovetail Hall",
+    "Elm Test Yard",
+    "Frostline Store",
+    "Garnet Studio",
+    "Hazel Pavilion",
+    "Ivory Field Office",
+    "Jasper Warehouse",
+    "Kingfisher Lab",
+    "Lilac Terminal",
+    "Mica Service Bay",
+    "Nectar Greenhouse",
+    "Osprey Archive",
 )
 COMPONENTS = (
-    "airflow monitor", "battery cabinet", "conveyor counter", "door controller", "environment probe",
-    "flow regulator", "gateway relay", "humidity logger", "inventory reader", "junction sensor",
-    "keypad module", "lighting timer", "meter bridge", "notification panel", "occupancy counter",
+    "airflow monitor",
+    "battery cabinet",
+    "conveyor counter",
+    "door controller",
+    "environment probe",
+    "flow regulator",
+    "gateway relay",
+    "humidity logger",
+    "inventory reader",
+    "junction sensor",
+    "keypad module",
+    "lighting timer",
+    "meter bridge",
+    "notification panel",
+    "occupancy counter",
 )
 
 
@@ -298,7 +407,7 @@ def _memory(
     outcome: str | None = None,
     day: int = 0,
 ) -> dict[str, Any]:
-    timestamp = datetime(2028, 1, 1, 9, tzinfo=UTC) + timedelta(days=day)
+    timestamp = datetime(2028, 1, 1, 9, tzinfo=timezone.utc) + timedelta(days=day)
     return {
         "memory_id": memory_id,
         "content": content,
@@ -315,63 +424,81 @@ def _memory(
     }
 
 
-def build_full() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], str]:
-    memories: list[dict[str, Any]] = []
-    associative_queries: list[dict[str, Any]] = []
-    chain_sections: list[str] = ["# Synthetic Associative Query Chains", "", "All organizations, systems, incidents, and values in this dataset are fictional.", ""]
-
-    for index, (organization, anchor, bridge_one, bridge_two, target, query, note) in enumerate(CHAIN_SPECS, 1):
-        ids = [f"mem-{len(memories) + step:04d}" for step in range(1, 5)]
-        # Symptoms and observed resolutions are events; the two bridge records
-        # explain the surrounding system and causal condition.
-        types = ("episodic", "contextual", "contextual", "episodic")
-        contents = (anchor, bridge_one, bridge_two, target)
-        session = f"chain-{index:02d}"
-        for step, (memory_id, content, memory_type) in enumerate(zip(ids, contents, types)):
-            links = []
-            if step > 0:
-                links.append(ids[step - 1])
-            if step < 3:
-                links.append(ids[step + 1])
-            memories.append(
-                _memory(
-                    memory_id,
-                    content,
-                    memory_type,
-                    source=SOURCES[step],
-                    session_id=session,
-                    agent_id=f"agent-{(index - 1) % 5 + 1:02d}",
-                    tags=["synthetic", "chain", organization.lower().replace(" ", "-")],
-                    entities=[organization],
-                    linked=links,
-                    outcome="resolved" if step == 3 else None,
-                    day=index * 3 + step,
-                )
+def _chain_rows(index: int, spec: ChainSpec) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
+    organization, anchor, bridge_one, bridge_two, target, query, note = spec
+    start = (index - 1) * 4 + 1
+    ids = [f"mem-{start + step:04d}" for step in range(4)]
+    contents = (anchor, bridge_one, bridge_two, target)
+    types = ("episodic", "contextual", "contextual", "episodic")
+    memories = []
+    for step, (memory_id, content, memory_type) in enumerate(zip(ids, contents, types, strict=True)):
+        adjacent = (candidate for candidate in (step - 1, step + 1) if 0 <= candidate < len(ids))
+        memories.append(
+            _memory(
+                memory_id,
+                content,
+                memory_type,
+                source=SOURCES[step],
+                session_id=f"chain-{index:02d}",
+                agent_id=f"agent-{(index - 1) % 5 + 1:02d}",
+                tags=["synthetic", "chain", organization.lower().replace(" ", "-")],
+                entities=[organization],
+                linked=[ids[candidate] for candidate in adjacent],
+                outcome="resolved" if step == 3 else None,
+                day=index * 3 + step,
             )
-        query_id = f"Q-{25 + index:03d}"
-        associative_queries.append(
-            {
-                "query_id": query_id,
-                "label": "associative",
-                "text": query,
-                "expected_relevant_node_ids": [ids[3]],
-                "required_intermediate_node_ids": [ids[1], ids[2]],
-                "reviewer_note": note,
-            }
         )
-        chain_sections.extend(
-            [
-                f"## {query_id}", "", f"**Query:** {query}", "", "**Chain:**", "",
-                f"- Anchor `{ids[0]}`: {anchor}",
-                f"- Intermediate `{ids[1]}`: {bridge_one}",
-                f"- Intermediate `{ids[2]}`: {bridge_two}",
-                f"- **Target** `{ids[3]}`: {target}", "", f"*Note: {note}*", "", "---", "",
-            ]
-        )
+    query_id = f"Q-{FULL_DIRECT_QUERY_COUNT + index:03d}"
+    query_row = {
+        "query_id": query_id,
+        "label": "associative",
+        "text": query,
+        "expected_relevant_node_ids": [ids[3]],
+        "required_intermediate_node_ids": [ids[1], ids[2]],
+        "reviewer_note": note,
+    }
+    section = [
+        f"## {query_id}",
+        "",
+        f"**Query:** {query}",
+        "",
+        "**Chain:**",
+        "",
+        f"- Anchor `{ids[0]}`: {anchor}",
+        f"- Intermediate `{ids[1]}`: {bridge_one}",
+        f"- Intermediate `{ids[2]}`: {bridge_two}",
+        f"- **Target** `{ids[3]}`: {target}",
+        "",
+        f"*Note: {note}*",
+        "",
+        "---",
+        "",
+    ]
+    return memories, query_row, section
 
-    direct_queries: list[dict[str, Any]] = []
+
+def _build_associative_rows() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    memories: list[dict[str, Any]] = []
+    queries: list[dict[str, Any]] = []
+    sections = [
+        "# Synthetic Associative Query Chains",
+        "",
+        "All organizations, systems, incidents, and values in this dataset are fictional.",
+        "",
+    ]
+    for index, spec in enumerate(CHAIN_SPECS, 1):
+        chain_memories, query, section = _chain_rows(index, spec)
+        memories.extend(chain_memories)
+        queries.append(query)
+        sections.extend(section)
+    return memories, queries, sections
+
+
+def _build_direct_rows(start: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    memories: list[dict[str, Any]] = []
+    queries: list[dict[str, Any]] = []
     for index, (question, answer) in enumerate(DIRECT_SPECS, 1):
-        memory_id = f"mem-{len(memories) + 1:04d}"
+        memory_id = f"mem-{start + index - 1:04d}"
         memory_type = "procedural" if answer.startswith("Run ") else "factual"
         memories.append(
             _memory(
@@ -386,7 +513,7 @@ def build_full() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[
                 day=100 + index,
             )
         )
-        direct_queries.append(
+        queries.append(
             {
                 "query_id": f"Q-{index:03d}",
                 "label": "direct",
@@ -396,26 +523,32 @@ def build_full() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[
                 "reviewer_note": "Direct lookup of a fictional operating rule.",
             }
         )
+    return memories, queries
 
+
+def _background_content(memory_type: str, facility: str, component: str, code: str, index: int) -> str:
+    if memory_type == "factual":
+        interval = (index % 11) + 2
+        return f"{facility} records {component} readings under reference {code}; the standard review interval is {interval} hours."
+    if memory_type == "episodic":
+        return f"During synthetic drill {code}, the {component} at {facility} completed its verification cycle with no service interruption."
+    if memory_type == "procedural":
+        return f"To verify the {component} at {facility}, open checklist {code}, capture one baseline reading, and record the final indicator state."
+    return f"At {facility}, {component} alerts are informational during exercise window {code} unless two consecutive readings exceed the local limit."
+
+
+def _append_background_rows(memories: list[dict[str, Any]]) -> None:
     type_counts = Counter(memory["memory_type"] for memory in memories)
-    while len(memories) < 500:
-        index = len(memories) + 1
+    first_index = len(memories) + 1
+    for index in range(first_index, FULL_MEMORY_COUNT + 1):
         memory_type = min(MEMORY_TYPES, key=lambda item: (type_counts[item], MEMORY_TYPES.index(item)))
         facility = FACILITIES[index % len(FACILITIES)]
         component = COMPONENTS[(index * 7) % len(COMPONENTS)]
         code = f"REF-{index:04d}"
-        if memory_type == "factual":
-            content = f"{facility} records {component} readings under reference {code}; the standard review interval is {(index % 11) + 2} hours."
-        elif memory_type == "episodic":
-            content = f"During synthetic drill {code}, the {component} at {facility} completed its verification cycle with no service interruption."
-        elif memory_type == "procedural":
-            content = f"To verify the {component} at {facility}, open checklist {code}, capture one baseline reading, and record the final indicator state."
-        else:
-            content = f"At {facility}, {component} alerts are informational during exercise window {code} unless two consecutive readings exceed the local limit."
         memories.append(
             _memory(
                 f"mem-{index:04d}",
-                content,
+                _background_content(memory_type, facility, component, code, index),
                 memory_type,
                 source=SOURCES[index % len(SOURCES)],
                 session_id=f"filler-{(index - 126) // 3:03d}",
@@ -427,6 +560,10 @@ def build_full() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[
         )
         type_counts[memory_type] += 1
 
+
+def _build_schedule(memories: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not 1 <= len(memories) <= FULL_MEMORY_COUNT:
+        raise RuntimeError(f"schedule requires 1 to {FULL_MEMORY_COUNT} memories")
     schedule: list[dict[str, Any]] = []
     offset = 0
     for index, memory in enumerate(memories):
@@ -435,8 +572,11 @@ def build_full() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[
             linked = memory["memory_id"] in previous["linked_memory_ids"]
             offset += 120 if linked else 900
         schedule.append({"memory_id": memory["memory_id"], "ingest_offset_seconds": offset})
+    return schedule
 
-    warmup = [
+
+def _warmup_rows() -> list[dict[str, Any]]:
+    return [
         {"text": "How should an airflow monitor baseline be recorded during a drill?", "positive": True},
         {"text": "Where are battery cabinet review intervals documented?", "positive": True},
         {"text": "What should be captured when checking a conveyor counter?", "positive": True},
@@ -444,16 +584,86 @@ def build_full() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[
         {"text": "When is an environment probe alert informational?", "positive": True},
         {"text": "What was the fictional lunar terminal's catering budget?", "positive": False},
     ]
+
+
+def build_full() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], str]:
+    memories, associative_queries, sections = _build_associative_rows()
+    direct_memories, direct_queries = _build_direct_rows(len(memories) + 1)
+    memories.extend(direct_memories)
+    _append_background_rows(memories)
     queries = direct_queries + associative_queries
-    return memories, queries, schedule, warmup, "\n".join(chain_sections)
+    schedule = _build_schedule(memories)
+    warmup = _warmup_rows()
+    expected = (FULL_MEMORY_COUNT, FULL_DIRECT_QUERY_COUNT, FULL_ASSOCIATIVE_QUERY_COUNT)
+    _validate_generated(memories, queries, schedule, warmup, expected)
+    return memories, queries, schedule, warmup, "\n".join(sections)
+
+
+def _validate_generated(
+    memories: list[dict[str, Any]],
+    queries: list[dict[str, Any]],
+    schedule: list[dict[str, Any]],
+    warmup: list[dict[str, Any]],
+    expected_counts: tuple[int, int, int],
+) -> None:
+    memory_ids = [memory["memory_id"] for memory in memories]
+    known = set(memory_ids)
+    by_id = {memory["memory_id"]: memory for memory in memories}
+    counts = (
+        len(memories),
+        sum(query["label"] == "direct" for query in queries),
+        sum(query["label"] == "associative" for query in queries),
+    )
+    if counts != expected_counts or len(known) != len(memory_ids):
+        raise RuntimeError(f"generated dataset count or ID invariant failed: {counts}")
+    if len(schedule) != len(memories) or [row["memory_id"] for row in schedule] != memory_ids:
+        raise RuntimeError("generated schedule does not match memory order")
+    offsets = [row["ingest_offset_seconds"] for row in schedule]
+    if offsets[0] != 0 or any(left >= right for left, right in pairwise(offsets)):
+        raise RuntimeError("generated schedule offsets must increase from zero")
+    if any("synthetic" not in memory["tags"] for memory in memories):
+        raise RuntimeError("every generated memory must be marked synthetic")
+    links = [
+        (memory_id, linked)
+        for memory_id, memory in zip(memory_ids, memories, strict=True)
+        for linked in memory["linked_memory_ids"]
+    ]
+    if any(linked not in known or memory_id not in by_id[linked]["linked_memory_ids"] for memory_id, linked in links):
+        raise RuntimeError("generated memory links must be known and symmetric")
+    if any(
+        not set(query["expected_relevant_node_ids"] + query["required_intermediate_node_ids"]) <= known
+        for query in queries
+    ):
+        raise RuntimeError("generated query annotations reference unknown memories")
+    holdout = {query["text"].casefold() for query in queries}
+    if not warmup or any(row["text"].casefold() in holdout for row in warmup):
+        raise RuntimeError("generated warmup must be non-empty and disjoint")
 
 
 def _jsonl(rows: list[dict[str, Any]]) -> str:
-    return "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
+    if not 1 <= len(rows) <= FULL_MEMORY_COUNT:
+        raise RuntimeError(f"JSONL generation requires 1 to {FULL_MEMORY_COUNT} rows")
+    lines: list[str] = []
+    total_bytes = 0
+    for row in rows:
+        line = json.dumps(row, sort_keys=True) + "\n"
+        if len(line) > MAX_RECORD_CHARS:
+            raise RuntimeError(f"generated record exceeds {MAX_RECORD_CHARS} characters")
+        total_bytes += len(line.encode())
+        if total_bytes > MAX_DATA_FILE_BYTES:
+            raise RuntimeError(f"generated JSONL exceeds {MAX_DATA_FILE_BYTES} bytes")
+        lines.append(line)
+    return "".join(lines)
 
 
-def _write_profile(root: Path, memories: list[dict[str, Any]], queries: list[dict[str, Any]], schedule: list[dict[str, Any]], warmup: list[dict[str, Any]], chains: str | None = None) -> None:
-    root.mkdir(parents=True, exist_ok=True)
+def _write_profile(
+    root: Path,
+    memories: list[dict[str, Any]],
+    queries: list[dict[str, Any]],
+    schedule: list[dict[str, Any]],
+    warmup: list[dict[str, Any]],
+    chains: str | None = None,
+) -> None:
     payloads = {
         "memories.jsonl": _jsonl(memories),
         "queries.jsonl": _jsonl(queries),
@@ -462,8 +672,11 @@ def _write_profile(root: Path, memories: list[dict[str, Any]], queries: list[dic
     }
     if chains is not None:
         payloads["chains.md"] = chains.rstrip() + "\n"
+    if any(len(payload.encode()) > MAX_DATA_FILE_BYTES for payload in payloads.values()):
+        raise RuntimeError(f"generated profile exceeds the {MAX_DATA_FILE_BYTES}-byte file limit")
+    root.mkdir(parents=True, exist_ok=True)
     for name, payload in payloads.items():
-        (root / name).write_text(payload, encoding="utf-8")
+        _write_text_exact(root / name, payload)
     manifest = {
         "profile": root.name,
         "generator": {"name": "bench.generate_dataset", "version": 1},
@@ -473,18 +686,20 @@ def _write_profile(root: Path, memories: list[dict[str, Any]], queries: list[dic
             "associative_queries": sum(query["label"] == "associative" for query in queries),
             "warmup_events": len(warmup),
         },
-        "sha256": {
-            name: hashlib.sha256(payload.encode()).hexdigest()
-            for name, payload in sorted(payloads.items())
-        },
+        "sha256": {name: hashlib.sha256(payload.encode()).hexdigest() for name, payload in sorted(payloads.items())},
     }
-    (root / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _write_text_exact(root / "manifest.json", json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
 
-def main() -> None:
-    memories, queries, schedule, warmup, chains = build_full()
-    _write_profile(ROOT / "full", memories, queries, schedule, warmup, chains)
+def _write_text_exact(path: Path, payload: str) -> None:
+    written = path.write_text(payload, encoding="utf-8")
+    if written != len(payload):
+        raise OSError(f"incomplete text write: {path}")
 
+
+def _select_smoke_memories(memories: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if len(memories) != FULL_MEMORY_COUNT:
+        raise RuntimeError(f"smoke selection requires {FULL_MEMORY_COUNT} full memories")
     selected_ids = {
         *(memory["memory_id"] for memory in memories[:20]),
         *(memory["memory_id"] for memory in memories[100:105]),
@@ -499,19 +714,40 @@ def main() -> None:
             break
     if any(smoke_filler_quota.values()):
         raise RuntimeError(f"could not balance smoke profile: {smoke_filler_quota}")
-    smoke_memories = [memory for memory in memories if memory["memory_id"] in selected_ids]
-    smoke_queries = [
-        query
-        for query in queries
-        if query["query_id"] in {"Q-001", "Q-002", "Q-003", "Q-004", "Q-005", "Q-026", "Q-027", "Q-028", "Q-029", "Q-030"}
-    ]
-    smoke_schedule = []
-    offset = 0
-    for index, memory in enumerate(smoke_memories):
-        if index > 0:
-            previous = smoke_memories[index - 1]
-            offset += 120 if memory["memory_id"] in previous["linked_memory_ids"] else 900
-        smoke_schedule.append({"memory_id": memory["memory_id"], "ingest_offset_seconds": offset})
+    selected = [memory for memory in memories if memory["memory_id"] in selected_ids]
+    if len(selected) != SMOKE_MEMORY_COUNT:
+        raise RuntimeError(f"smoke profile requires {SMOKE_MEMORY_COUNT} memories")
+    return selected
+
+
+def _select_smoke_queries(queries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    selected_query_ids = {
+        "Q-001",
+        "Q-002",
+        "Q-003",
+        "Q-004",
+        "Q-005",
+        "Q-026",
+        "Q-027",
+        "Q-028",
+        "Q-029",
+        "Q-030",
+    }
+    selected = [query for query in queries if query["query_id"] in selected_query_ids]
+    expected = SMOKE_DIRECT_QUERY_COUNT + SMOKE_ASSOCIATIVE_QUERY_COUNT
+    if len(selected) != expected:
+        raise RuntimeError(f"smoke profile requires {expected} queries")
+    return selected
+
+
+def main() -> None:
+    memories, queries, schedule, warmup, chains = build_full()
+    _write_profile(ROOT / "full", memories, queries, schedule, warmup, chains)
+    smoke_memories = _select_smoke_memories(memories)
+    smoke_queries = _select_smoke_queries(queries)
+    smoke_schedule = _build_schedule(smoke_memories)
+    expected = (SMOKE_MEMORY_COUNT, SMOKE_DIRECT_QUERY_COUNT, SMOKE_ASSOCIATIVE_QUERY_COUNT)
+    _validate_generated(smoke_memories, smoke_queries, smoke_schedule, warmup, expected)
     _write_profile(ROOT / "smoke", smoke_memories, smoke_queries, smoke_schedule, warmup)
 
 

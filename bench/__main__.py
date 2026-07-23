@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import argparse
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from .baseline import LockedBaseline
+from .contracts import MAX_SEED_COUNT, MAX_SEED_TEXT_CHARS, MAX_TOP_K
 from .dataset import load_dataset
 from .protocol import run_benchmark
 from .reporting import render_markdown, write_report
@@ -29,15 +30,26 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _parse_seeds(value: str) -> tuple[int, ...]:
+    if len(value) > MAX_SEED_TEXT_CHARS:
+        raise ValueError(f"--seeds accepts at most {MAX_SEED_TEXT_CHARS} characters")
+    if value.count(",") >= MAX_SEED_COUNT:
+        raise ValueError(f"--seeds accepts at most {MAX_SEED_COUNT} values")
+    seeds = tuple(int(item.strip()) for item in value.split(",") if item.strip())
+    if not seeds:
+        raise ValueError("--seeds requires at least one integer")
+    return seeds
+
+
 def main() -> int:
     args = parse_args()
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-    if args.top_k <= 0:
-        raise ValueError("--top-k must be positive")
+    if not 1 <= args.top_k <= MAX_TOP_K:
+        raise ValueError(f"--top-k must be between 1 and {MAX_TOP_K}")
     if args.profile == "full" and args.top_k != 10:
         raise ValueError("the locked full-profile reproduction requires --top-k 10")
-    seeds = tuple(int(value.strip()) for value in args.seeds.split(",") if value.strip())
+    seeds = _parse_seeds(args.seeds)
     expected = (50, 5, 5) if args.profile == "smoke" else (500, 25, 25)
     dataset = load_dataset(ROOT / "data" / args.profile, expected_counts=expected)
     factories: dict[str, Callable[[], Retriever]] = {
@@ -46,10 +58,11 @@ def main() -> int:
     }
     selected = factories[args.retriever]
     reference = FixtureRetriever if args.profile == "smoke" else LockedBaseline
+    candidate_factory = None if selected is reference else selected
     report = run_benchmark(
         dataset,
         baseline_factory=reference,
-        candidate_factory=selected,
+        candidate_factory=candidate_factory,
         seeds=seeds,
         top_k=args.top_k,
         required_unique_wins=10 if args.profile == "full" and args.retriever != "baseline" else 0,

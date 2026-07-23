@@ -14,8 +14,14 @@ environment and run the test suite with:
 
 ```console
 uv sync --extra dev
-uv run pytest
+uv run ruff format --check .
+uv run ruff check .
+uv run mypy
+uv run python -W error -m pytest
+uv run python -W error -m bench --profile smoke --retriever fixture --check --no-write
 ```
+
+These checks are required in CI.
 
 Build the wheel and source distribution with:
 

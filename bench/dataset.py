@@ -2,15 +2,37 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import hashlib
 import json
+from collections.abc import Iterable
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, cast
+
+from .contracts import (
+    MAX_DATA_FILE_BYTES,
+    MAX_MANIFEST_FILES,
+    MAX_MEMORY_COUNT,
+    MAX_QUERY_COUNT,
+    MAX_RECORD_CHARS,
+    MAX_SCHEDULE_COUNT,
+    MAX_WARMUP_COUNT,
+)
 
 
 class DatasetError(ValueError):
     """Raised when benchmark data violates its integrity contract."""
+
+
+_ALLOWED_MANIFEST_FILES = frozenset(
+    {
+        "chains.md",
+        "memories.jsonl",
+        "queries.jsonl",
+        "schedule.jsonl",
+        "warmup.jsonl",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -57,11 +79,11 @@ def load_dataset(data_dir: str | Path, *, expected_counts: tuple[int, int, int] 
     """Load memories, queries, and optional warm-up events from ``data_dir``."""
     root = Path(data_dir)
     manifest = _verify_manifest(root)
-    memory_rows = _read_jsonl(root / "memories.jsonl")
-    query_rows = _read_jsonl(root / "queries.jsonl")
-    schedule_rows = _read_jsonl(root / "schedule.jsonl")
+    memory_rows = _read_jsonl(root / "memories.jsonl", max_rows=MAX_MEMORY_COUNT)
+    query_rows = _read_jsonl(root / "queries.jsonl", max_rows=MAX_QUERY_COUNT)
+    schedule_rows = _read_jsonl(root / "schedule.jsonl", max_rows=MAX_SCHEDULE_COUNT)
     warmup_path = root / "warmup.jsonl"
-    warmup_rows = _read_jsonl(warmup_path) if warmup_path.exists() else []
+    warmup_rows = _read_jsonl(warmup_path, max_rows=MAX_WARMUP_COUNT) if warmup_path.exists() else []
 
     schedule = _schedule(schedule_rows)
     raw_memory_ids = {_text(row, "memory_id", "memory", index) for index, row in enumerate(memory_rows, 1)}
@@ -73,7 +95,9 @@ def load_dataset(data_dir: str | Path, *, expected_counts: tuple[int, int, int] 
     _validate(memories, queries, warmup)
 
     counts = (len(memories), sum(q.label == "direct" for q in queries), sum(q.label == "associative" for q in queries))
-    manifest_counts = manifest.get("counts", {})
+    manifest_counts = manifest.get("counts")
+    if not isinstance(manifest_counts, dict):
+        raise DatasetError("dataset manifest requires a counts object")
     declared = (
         manifest_counts.get("memories"),
         manifest_counts.get("direct_queries"),
@@ -86,20 +110,26 @@ def load_dataset(data_dir: str | Path, *, expected_counts: tuple[int, int, int] 
     return BenchmarkDataset(memories, queries, warmup, _fingerprint(root, warmup_path.exists()))
 
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+def _read_jsonl(path: Path, *, max_rows: int) -> list[dict[str, Any]]:
     if not path.is_file():
         raise DatasetError(f"missing dataset file: {path}")
+    _validate_file_size(path)
     rows: list[dict[str, Any]] = []
-    for line_number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if not raw.strip():
-            continue
-        try:
-            row = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise DatasetError(f"invalid JSON at {path}:{line_number}: {exc.msg}") from exc
-        if not isinstance(row, dict):
-            raise DatasetError(f"row at {path}:{line_number} must be an object")
-        rows.append(row)
+    with path.open(encoding="utf-8") as handle:
+        for line_number, raw in enumerate(handle, 1):
+            if line_number > max_rows:
+                raise DatasetError(f"dataset file exceeds {max_rows} rows: {path}")
+            if len(raw) > MAX_RECORD_CHARS:
+                raise DatasetError(f"record exceeds {MAX_RECORD_CHARS} characters at {path}:{line_number}")
+            if not raw.strip():
+                continue
+            try:
+                row = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise DatasetError(f"invalid JSON at {path}:{line_number}: {exc.msg}") from exc
+            if not isinstance(row, dict):
+                raise DatasetError(f"row at {path}:{line_number} must be an object")
+            rows.append(row)
     if not rows:
         raise DatasetError(f"dataset file is empty: {path}")
     return rows
@@ -173,7 +203,9 @@ def _schedule(rows: list[dict[str, Any]]) -> dict[str, int]:
     return schedule
 
 
-def _validate(memories: tuple[MemoryRecord, ...], queries: tuple[QueryRecord, ...], warmup: tuple[WarmupEvent, ...]) -> None:
+def _validate(
+    memories: tuple[MemoryRecord, ...], queries: tuple[QueryRecord, ...], warmup: tuple[WarmupEvent, ...]
+) -> None:
     memory_ids = [memory.benchmark_id for memory in memories]
     query_ids = [query.query_id for query in queries]
     if len(memory_ids) != len(set(memory_ids)):
@@ -211,19 +243,33 @@ def _fingerprint(root: Path, include_warmup: bool) -> str:
     return digest.hexdigest()
 
 
+def _validate_file_size(path: Path) -> None:
+    size = path.stat().st_size
+    if size > MAX_DATA_FILE_BYTES:
+        raise DatasetError(f"dataset file exceeds {MAX_DATA_FILE_BYTES} bytes: {path}")
+
+
 def _verify_manifest(root: Path) -> dict[str, Any]:
     path = root / "manifest.json"
     if not path.is_file():
         raise DatasetError(f"missing dataset manifest: {path}")
+    _validate_file_size(path)
     try:
-        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest = cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
         expected = manifest["sha256"]
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
         raise DatasetError(f"invalid dataset manifest: {path}") from exc
+    if not isinstance(expected, dict) or not 1 <= len(expected) <= MAX_MANIFEST_FILES:
+        raise DatasetError(f"manifest requires 1 to {MAX_MANIFEST_FILES} checksums: {path}")
     for name, checksum in expected.items():
+        if not isinstance(name, str) or not isinstance(checksum, str):
+            raise DatasetError(f"manifest checksums must map strings to strings: {path}")
+        if name not in _ALLOWED_MANIFEST_FILES:
+            raise DatasetError(f"manifest contains unsupported file: {name}")
         target = root / name
         if not target.is_file():
             raise DatasetError(f"manifest file is missing: {target}")
+        _validate_file_size(target)
         actual = hashlib.sha256(target.read_bytes()).hexdigest()
         if actual != checksum:
             raise DatasetError(f"dataset checksum mismatch: {target}")

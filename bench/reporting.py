@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import json
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 
+from .contracts import MAX_RUN_ID_CHARS, MAX_SEED_COUNT
 from .protocol import BenchmarkReport
+
+_RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
 def render_markdown(report: BenchmarkReport) -> str:
+    _validate_report(report)
     decision = "PASS" if report.passed else "FAIL"
     lines = [
         "# SynapticDB Benchmark",
@@ -53,11 +58,27 @@ def render_markdown(report: BenchmarkReport) -> str:
 
 
 def write_report(report: BenchmarkReport, output_dir: str | Path, *, run_id: str | None = None) -> tuple[Path, Path]:
-    resolved = run_id or datetime.now(UTC).strftime("bench-%Y%m%dT%H%M%SZ")
+    _validate_report(report)
+    resolved = run_id if run_id is not None else datetime.now(timezone.utc).strftime("bench-%Y%m%dT%H%M%SZ")
+    if len(resolved) > MAX_RUN_ID_CHARS or _RUN_ID.fullmatch(resolved) is None:
+        raise ValueError("run_id must be a short filename-safe identifier")
     root = Path(output_dir) / resolved
     root.mkdir(parents=True, exist_ok=False)
     json_path = root / "report.json"
     markdown_path = root / "report.md"
-    json_path.write_text(json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    markdown_path.write_text(render_markdown(report), encoding="utf-8")
+    _write_text_exact(json_path, json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n")
+    _write_text_exact(markdown_path, render_markdown(report))
     return json_path, markdown_path
+
+
+def _validate_report(report: BenchmarkReport) -> None:
+    if not 1 <= len(report.runs) <= MAX_SEED_COUNT:
+        raise ValueError(f"benchmark report requires 1 to {MAX_SEED_COUNT} runs")
+    if report.direct_total <= 0 or report.associative_total <= 0:
+        raise ValueError("benchmark report totals must be positive")
+
+
+def _write_text_exact(path: Path, payload: str) -> None:
+    written = path.write_text(payload, encoding="utf-8")
+    if written != len(payload):
+        raise OSError(f"incomplete report write: {path}")

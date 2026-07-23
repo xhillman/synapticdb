@@ -3,4 +3,4 @@ import synapticdb
 
 def test_import() -> None:
     assert synapticdb.__version__ == "0.1.0"
-    assert synapticdb.__all__ == []
+    assert synapticdb.__all__ == ()

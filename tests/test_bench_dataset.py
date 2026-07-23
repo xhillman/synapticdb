@@ -1,11 +1,13 @@
+import hashlib
 import json
 from collections import Counter
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
 
 from bench.dataset import DatasetError, load_dataset
-
+from bench.generate_dataset import build_full
 
 ROOT = Path(__file__).parents[1]
 
@@ -24,14 +26,8 @@ def test_full_dataset_contract_and_gold_isolation() -> None:
     assert all("linked_memory_ids" not in memory.metadata for memory in dataset.memories)
     assert all("created_at" not in memory.metadata for memory in dataset.memories)
     assert not hasattr(dataset.memories[0], "linked_memory_ids")
-    assert all(
-        left.ingest_offset_seconds < right.ingest_offset_seconds
-        for left, right in zip(dataset.memories, dataset.memories[1:])
-    )
-    gaps = {
-        right.ingest_offset_seconds - left.ingest_offset_seconds
-        for left, right in zip(dataset.memories, dataset.memories[1:])
-    }
+    assert all(left.ingest_offset_seconds < right.ingest_offset_seconds for left, right in pairwise(dataset.memories))
+    gaps = {right.ingest_offset_seconds - left.ingest_offset_seconds for left, right in pairwise(dataset.memories)}
     assert gaps == {120, 900}
     assert Counter(memory.metadata["memory_type"] for memory in dataset.memories) == {
         "factual": 125,
@@ -55,6 +51,10 @@ def test_smoke_dataset_contract() -> None:
     assert max(type_counts.values()) - min(type_counts.values()) <= 1
 
 
+def test_synthetic_generator_is_deterministic() -> None:
+    assert build_full() == build_full()
+
+
 def test_manifest_detects_dataset_drift(tmp_path: Path) -> None:
     (tmp_path / "memories.jsonl").write_text("{}\n", encoding="utf-8")
     (tmp_path / "queries.jsonl").write_text("{}\n", encoding="utf-8")
@@ -64,4 +64,25 @@ def test_manifest_detects_dataset_drift(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     with pytest.raises(DatasetError, match="checksum mismatch"):
+        load_dataset(tmp_path)
+
+
+def test_dataset_rejects_more_than_the_bounded_memory_rows(tmp_path: Path) -> None:
+    payload = "{}\n" * 501
+    (tmp_path / "memories.jsonl").write_text(payload, encoding="utf-8")
+    checksum = hashlib.sha256(payload.encode()).hexdigest()
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"sha256": {"memories.jsonl": checksum}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(DatasetError, match="exceeds 500 rows"):
+        load_dataset(tmp_path)
+
+
+def test_manifest_cannot_reference_files_outside_dataset(tmp_path: Path) -> None:
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"sha256": {"../outside.jsonl": "unused"}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(DatasetError, match="unsupported file"):
         load_dataset(tmp_path)

@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from importlib import metadata
 import platform
 import sys
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+from importlib import metadata
+from typing import Any
 
+from .contracts import MAX_MEMORY_COUNT, MAX_QUERY_COUNT, MAX_SEED_COUNT, MAX_TOP_K, MAX_WARMUP_COUNT
 from .dataset import BenchmarkDataset, QueryRecord
-from .retrievers import Retriever, Retrieval
+from .retrievers import Retrieval, Retriever
+
+RetrieverFactory = Callable[[], Retriever]
 
 
 @dataclass(frozen=True)
@@ -61,71 +65,151 @@ class BenchmarkReport:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class _Execution:
+    result: SeedResult
+    baseline_name: str
+    candidate_name: str
+    baseline_config: dict[str, Any]
+    candidate_config: dict[str, Any]
+
+
 def run_benchmark(
     dataset: BenchmarkDataset,
     *,
-    baseline_factory: Callable[[], Retriever],
-    candidate_factory: Callable[[], Retriever],
+    baseline_factory: RetrieverFactory,
+    candidate_factory: RetrieverFactory | None,
     seeds: tuple[int, ...] = (1337,),
     top_k: int = 10,
     required_unique_wins: int = 10,
     direct_tolerance: float = 0.05,
     expected_baseline_hits: tuple[int, int] | None = None,
 ) -> BenchmarkReport:
-    """Run ingest → warm-up → holdout evaluation for each fixed seed."""
-    if not seeds or top_k <= 0:
-        raise ValueError("at least one seed and a positive top_k are required")
-    runs: list[SeedResult] = []
-    baseline_name = candidate_name = ""
-    baseline_config: dict[str, Any] = {}
-    candidate_config: dict[str, Any] = {}
-    for seed in seeds:
-        started = time.perf_counter()
-        baseline = baseline_factory()
-        same_retriever = candidate_factory is baseline_factory
-        candidate = baseline if same_retriever else candidate_factory()
-        baseline_name, candidate_name = baseline.name, candidate.name
-        baseline_config = _retriever_config(baseline)
-        candidate_config = _retriever_config(candidate)
-        baseline.ingest(dataset.memories, seed=seed)
-        if not same_retriever:
-            candidate.ingest(dataset.memories, seed=seed)
-        _warm(baseline, dataset, top_k)
-        if not same_retriever:
-            _warm(candidate, dataset, top_k)
-        baseline_results = [baseline.recall(query.text, top_k=top_k) for query in dataset.queries]
-        candidate_results = baseline_results if same_retriever else [
-            candidate.recall(query.text, top_k=top_k) for query in dataset.queries
-        ]
-        runs.append(
-            _score(
-                dataset,
-                seed,
-                baseline_results,
-                candidate_results,
-                top_k=top_k,
-                required_unique_wins=required_unique_wins,
-                direct_tolerance=direct_tolerance,
-                expected_baseline_hits=expected_baseline_hits,
-                elapsed=time.perf_counter() - started,
-            )
+    """Run ingest → warm-up → holdout evaluation for each bounded seed."""
+    _validate_run_inputs(dataset, seeds, top_k, required_unique_wins, direct_tolerance, expected_baseline_hits)
+    executions = tuple(
+        _execute_seed(
+            dataset,
+            seed,
+            baseline_factory,
+            candidate_factory,
+            top_k,
+            required_unique_wins,
+            direct_tolerance,
+            expected_baseline_hits,
         )
+        for seed in seeds
+    )
+    _validate_execution_identity(executions)
+    first = executions[0]
     return BenchmarkReport(
         dataset_fingerprint=dataset.fingerprint,
-        baseline_name=baseline_name,
-        candidate_name=candidate_name,
+        baseline_name=first.baseline_name,
+        candidate_name=first.candidate_name,
         top_k=top_k,
         direct_total=dataset.direct_total,
         associative_total=dataset.associative_total,
         required_unique_wins=required_unique_wins,
         direct_tolerance=direct_tolerance,
         expected_baseline_hits=expected_baseline_hits,
-        passed=all(run.passed for run in runs),
-        runs=tuple(runs),
-        baseline_config=baseline_config,
-        candidate_config=candidate_config,
+        passed=all(execution.result.passed for execution in executions),
+        runs=tuple(execution.result for execution in executions),
+        baseline_config=first.baseline_config,
+        candidate_config=first.candidate_config,
         environment=_environment(),
     )
+
+
+def _execute_seed(
+    dataset: BenchmarkDataset,
+    seed: int,
+    baseline_factory: RetrieverFactory,
+    candidate_factory: RetrieverFactory | None,
+    top_k: int,
+    required_unique_wins: int,
+    direct_tolerance: float,
+    expected_baseline_hits: tuple[int, int] | None,
+) -> _Execution:
+    started = time.perf_counter()
+    baseline = baseline_factory()
+    candidate = baseline if candidate_factory is None else candidate_factory()
+    baseline.ingest(dataset.memories, seed=seed)
+    if candidate is not baseline:
+        candidate.ingest(dataset.memories, seed=seed)
+    _warm(baseline, dataset, top_k)
+    if candidate is not baseline:
+        _warm(candidate, dataset, top_k)
+    baseline_results = [baseline.recall(query.text, top_k=top_k) for query in dataset.queries]
+    candidate_results = (
+        baseline_results
+        if candidate is baseline
+        else [candidate.recall(query.text, top_k=top_k) for query in dataset.queries]
+    )
+    result = _score(
+        dataset,
+        seed,
+        baseline_results,
+        candidate_results,
+        top_k=top_k,
+        required_unique_wins=required_unique_wins,
+        direct_tolerance=direct_tolerance,
+        expected_baseline_hits=expected_baseline_hits,
+        elapsed=time.perf_counter() - started,
+    )
+    return _Execution(result, baseline.name, candidate.name, _retriever_config(baseline), _retriever_config(candidate))
+
+
+def _validate_run_inputs(
+    dataset: BenchmarkDataset,
+    seeds: tuple[int, ...],
+    top_k: int,
+    required_unique_wins: int,
+    direct_tolerance: float,
+    expected_baseline_hits: tuple[int, int] | None,
+) -> None:
+    if not 1 <= len(seeds) <= MAX_SEED_COUNT or len(set(seeds)) != len(seeds):
+        raise ValueError(f"seeds must contain 1 to {MAX_SEED_COUNT} unique values")
+    if not all(isinstance(seed, int) for seed in seeds):
+        raise TypeError("every seed must be an integer")
+    if not 1 <= top_k <= MAX_TOP_K:
+        raise ValueError(f"top_k must be between 1 and {MAX_TOP_K}")
+    if not 0 <= required_unique_wins <= dataset.associative_total:
+        raise ValueError("required_unique_wins exceeds the associative query count")
+    if not 0.0 <= direct_tolerance <= 1.0:
+        raise ValueError("direct_tolerance must be between 0 and 1")
+    bounded_dataset = (
+        1 <= len(dataset.memories) <= MAX_MEMORY_COUNT
+        and 1 <= len(dataset.queries) <= MAX_QUERY_COUNT
+        and len(dataset.warmup) <= MAX_WARMUP_COUNT
+        and dataset.direct_total > 0
+        and dataset.associative_total > 0
+    )
+    if not bounded_dataset:
+        raise ValueError("dataset must contain bounded direct and associative inputs")
+    _validate_expected_hits(dataset, expected_baseline_hits)
+
+
+def _validate_expected_hits(dataset: BenchmarkDataset, expected: tuple[int, int] | None) -> None:
+    if expected is None:
+        return
+    if len(expected) != 2:
+        raise ValueError("expected_baseline_hits requires direct and associative counts")
+    if not 0 <= expected[0] <= dataset.direct_total:
+        raise ValueError("expected direct baseline hits exceed dataset totals")
+    if not 0 <= expected[1] <= dataset.associative_total:
+        raise ValueError("expected associative baseline hits exceed dataset totals")
+
+
+def _validate_execution_identity(executions: tuple[_Execution, ...]) -> None:
+    first = executions[0]
+    if any(execution.baseline_name != first.baseline_name for execution in executions):
+        raise RuntimeError("baseline identity changed between seeds")
+    if any(execution.candidate_name != first.candidate_name for execution in executions):
+        raise RuntimeError("candidate identity changed between seeds")
+    if any(execution.baseline_config != first.baseline_config for execution in executions):
+        raise RuntimeError("baseline configuration changed between seeds")
+    if any(execution.candidate_config != first.candidate_config for execution in executions):
+        raise RuntimeError("candidate configuration changed between seeds")
 
 
 def _warm(retriever: Retriever, dataset: BenchmarkDataset, top_k: int) -> None:
@@ -146,9 +230,12 @@ def _score(
     expected_baseline_hits: tuple[int, int] | None,
     elapsed: float,
 ) -> SeedResult:
+    expected_count = len(dataset.queries)
+    if len(baseline) != expected_count or len(candidate) != expected_count:
+        raise RuntimeError("retrievers must return exactly one result per query")
     scores = tuple(
         _score_query(query, base, contender, top_k)
-        for query, base, contender in zip(dataset.queries, baseline, candidate)
+        for query, base, contender in zip(dataset.queries, baseline, candidate, strict=True)
     )
     base_direct = sum(score.baseline_hit for score in scores if score.label == "direct")
     candidate_direct = sum(score.candidate_hit for score in scores if score.label == "direct")
@@ -180,10 +267,7 @@ def _score_query(query: QueryRecord, baseline: Retrieval, candidate: Retrieval, 
     candidate_rank = _first_rank(candidate.ranked_ids[:top_k], expected)
     path_present = bool(set(query.intermediate_ids) & set(candidate.path_benchmark_ids))
     unique = bool(
-        query.label == "associative"
-        and candidate_rank is not None
-        and baseline_rank is None
-        and path_present
+        query.label == "associative" and candidate_rank is not None and baseline_rank is None and path_present
     )
     return QueryScore(
         query_id=query.query_id,
@@ -208,7 +292,15 @@ def _retriever_config(retriever: Retriever) -> dict[str, Any]:
 
 def _environment() -> dict[str, str]:
     values = {"python": sys.version.split()[0], "platform": platform.platform()}
-    for package in ("faiss-cpu", "numpy", "rank-bm25", "scikit-learn", "sentence-transformers", "torch", "transformers"):
+    for package in (
+        "faiss-cpu",
+        "numpy",
+        "rank-bm25",
+        "scikit-learn",
+        "sentence-transformers",
+        "torch",
+        "transformers",
+    ):
         try:
             values[package] = metadata.version(package)
         except metadata.PackageNotFoundError:

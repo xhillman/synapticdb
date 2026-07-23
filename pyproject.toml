@@ -41,7 +41,9 @@ bench = [
 ]
 dev = [
     "build>=1.2",
+    "mypy>=1.16,<2",
     "pytest>=8",
+    "ruff>=0.12,<1",
 ]
 
 [tool.setuptools.packages.find]
@@ -49,4 +51,19 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"
+filterwarnings = ["error"]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["B", "C90", "E4", "E7", "E9", "F", "I", "RUF", "SIM", "UP"]
+
+[tool.mypy]
+files = ["src", "bench"]
+ignore_missing_imports = true
+python_version = "3.10"
+strict = true
+warn_unreachable = true
