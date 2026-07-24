@@ -174,6 +174,19 @@ def test_list_edges_and_forget_cascade(store: Store) -> None:
         store.get_memory(center_id)
 
 
+def test_list_edges_on_a_dense_hub_returns_strongest_edges(store: Store) -> None:
+    center_id = remember(store, "center")
+    neighbor_ids = tuple(remember(store, f"neighbor {index}") for index in range(401))
+    strong_edge = store.insert_edge(center_id, neighbor_ids[0], 0.9, "explicit")
+    for neighbor_id in neighbor_ids[1:]:
+        store.insert_edge(center_id, neighbor_id, 0.25, "semantic")
+
+    edges = store.list_edges_for_node(center_id)
+    assert len(edges) == 400
+    assert edges[0] == strong_edge
+    assert all(edges[index].weight >= edges[index + 1].weight for index in range(len(edges) - 1))
+
+
 def test_bulk_edge_update_rolls_back_on_unknown_edge(store: Store) -> None:
     first_id = remember(store, "first")
     second_id = remember(store, "second")

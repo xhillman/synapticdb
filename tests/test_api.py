@@ -52,6 +52,25 @@ def test_recall_persists_unit_energies_for_fusion_only_results() -> None:
         assert stored.energies == {first.id: 1.0, second.id: 1.0}
 
 
+def test_recall_blends_association_and_persists_activation_evidence() -> None:
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        anchor = memory.remember("alpha anchor")
+        for index in range(40):
+            memory.remember(f"gamma filler {index}")
+        associated = memory.remember("delta hidden")
+        edge = memory._store.insert_edge(anchor.id, associated.id, 1.0, "explicit")
+
+        result = memory.recall("alpha", top_k=50)
+        recalled = {item.memory.id: item for item in result.memories}
+        stored = memory._store.get_query(result.query_id)
+
+        assert result.maturity > 0.0
+        assert recalled[associated.id].via == "association"
+        assert recalled[associated.id].score > 0.0
+        assert stored.energies[associated.id] == pytest.approx(0.8)
+        assert stored.path_edge_ids == (edge.id,)
+
+
 def test_where_filter_requires_present_equal_metadata() -> None:
     with Synaptic(":memory:", embedding_fn=embedding) as memory:
         call = memory.remember("alpha call", {"source": "call", "optional": None})

@@ -4,20 +4,28 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import TracebackType
 from uuid import UUID
 
+from synapticdb.activation import (
+    ACTIVATION_SEED_COUNT,
+    ActivationResult,
+    Neighbor,
+    spread_activation,
+)
 from synapticdb.confidence import ConfidenceCache, GraphMetrics
 from synapticdb.embeddings import Embedder, EmbeddingFunction
 from synapticdb.models import InvalidArgumentError, Memory, Recalled, RecallResult, Stats
-from synapticdb.retrieval import RankedHit, min_max_normalize, reciprocal_rank_fusion
-from synapticdb.store import GraphSummary, Store
+from synapticdb.retrieval import (
+    BlendedHit,
+    blend_rankings,
+    min_max_normalize,
+    reciprocal_rank_fusion,
+)
+from synapticdb.store import CANDIDATE_LIMIT, GraphSummary, Store
 
-# TODO(phase-4): candidate depth (PRD §9 parameter 2) is also defined in
-# store.py; give it a single source of truth when the blend lands.
-_CANDIDATE_LIMIT = 40
 _MAX_FILTER_KEYS = 64
 _MAX_TEXT_CHARS = 1_000_000
 _MAX_TOP_K = 100
@@ -70,26 +78,19 @@ class Synaptic:
         result_limit = _top_k(top_k)
         filters = _where_filter(where)
         embedding = self._embedder.embed(text)
-        keyword = self._store.keyword_search(text, limit=_CANDIDATE_LIMIT)
-        semantic = self._store.semantic_search(embedding, limit=_CANDIDATE_LIMIT)
-        fused = reciprocal_rank_fusion(
-            (
-                tuple(hit.memory_id for hit in keyword),
-                tuple(hit.memory_id for hit in semantic),
-            )
-        )
-        fused_scores = min_max_normalize({hit.memory_id: hit.score for hit in fused})
-        selected_ids, selected_scores = self._select_results(fused, fused_scores, filters, result_limit)
-        maturity = self._maturity(self._store.graph_summary())
-        # Fusion-only results carry energy 1.0 (PRD §6.6); Phase 4 replaces
-        # these with real activation energies.
+        ranked, activation, maturity = self._rank_candidates(text, embedding)
+        selected_ids, selected = self._select_results(ranked, filters, result_limit)
+        energies = _result_energies(selected_ids, activation)
         query_row, memories = self._store.record_recall(
             text,
             selected_ids,
-            {memory_id: 1.0 for memory_id in selected_ids},
-            (),
+            energies,
+            activation.path_edge_ids,
         )
-        recalled = [Recalled(memory=memory, score=selected_scores[memory.id], via="search") for memory in memories]
+        recalled = [
+            Recalled(memory=memory, score=selected[memory.id].score, via=selected[memory.id].via)
+            for memory in memories
+        ]
         latency_ms = (time.perf_counter() - started) * 1000.0
         return RecallResult(
             query_id=query_row.id,
@@ -97,6 +98,58 @@ class Synaptic:
             maturity=maturity,
             latency_ms=latency_ms,
         )
+
+    def _rank_candidates(
+        self,
+        text: str,
+        embedding: Sequence[float],
+    ) -> tuple[tuple[BlendedHit, ...], ActivationResult, float]:
+        keyword = self._store.keyword_search(text, limit=CANDIDATE_LIMIT)
+        semantic = self._store.semantic_search(embedding, limit=CANDIDATE_LIMIT)
+        fused = reciprocal_rank_fusion(
+            (
+                tuple(hit.memory_id for hit in keyword),
+                tuple(hit.memory_id for hit in semantic),
+            )
+        )
+        fused_scores = min_max_normalize({hit.memory_id: hit.score for hit in fused})
+        maturity = self._maturity(self._store.graph_summary())
+        seeds = tuple(
+            (hit.memory_id, fused_scores[hit.memory_id])
+            for hit in fused[:ACTIVATION_SEED_COUNT]
+        )
+        activation = spread_activation(seeds, self._activation_neighbors)
+        activation_scores = {hit.memory_id: hit.score for hit in activation.hits}
+        ranked = blend_rankings(fused_scores, activation_scores, maturity)
+        return ranked, activation, maturity
+
+    def _activation_neighbors(self, memory_id: UUID) -> tuple[Neighbor, ...]:
+        # TODO(phase-5): PRD §5.2 spreads via *effective* edge weight (§6.4);
+        # edge.weight is the stored, undecayed value. Switch to the decayed
+        # weight when lazy decay lands, or activation ignores edge aging.
+        neighbors: list[Neighbor] = []
+        for edge in self._store.list_edges_for_node(memory_id):
+            target_id = edge.b if edge.a == memory_id else edge.a
+            neighbors.append(Neighbor(target_id, edge.id, edge.weight))
+        return tuple(neighbors)
+
+    def _select_results(
+        self,
+        ranked: tuple[BlendedHit, ...],
+        filters: Mapping[str, object],
+        limit: int,
+    ) -> tuple[tuple[UUID, ...], dict[UUID, BlendedHit]]:
+        ranked_ids = tuple(hit.memory_id for hit in ranked)
+        memories = self._store.get_memories(ranked_ids)
+        hits_by_id = {hit.memory_id: hit for hit in ranked}
+        selected_ids: list[UUID] = []
+        for memory in memories:
+            if _metadata_matches(memory.metadata, filters):
+                selected_ids.append(memory.id)
+            if len(selected_ids) == limit:
+                break
+        identifiers = tuple(selected_ids)
+        return identifiers, {memory_id: hits_by_id[memory_id] for memory_id in identifiers}
 
     def forget(self, memory_id: UUID) -> None:
         self._require_open()
@@ -133,24 +186,6 @@ class Synaptic:
         traceback: TracebackType | None,
     ) -> None:
         self.close()
-
-    def _select_results(
-        self,
-        fused: tuple[RankedHit, ...],
-        scores: Mapping[UUID, float],
-        filters: Mapping[str, object],
-        limit: int,
-    ) -> tuple[tuple[UUID, ...], dict[UUID, float]]:
-        ranked_ids = tuple(hit.memory_id for hit in fused)
-        memories = self._store.get_memories(ranked_ids)
-        selected_ids: list[UUID] = []
-        for memory in memories:
-            if _metadata_matches(memory.metadata, filters):
-                selected_ids.append(memory.id)
-            if len(selected_ids) == limit:
-                break
-        identifiers = tuple(selected_ids)
-        return identifiers, {memory_id: scores[memory_id] for memory_id in identifiers}
 
     def _maturity(self, summary: GraphSummary) -> float:
         metrics = GraphMetrics(
@@ -206,3 +241,11 @@ def _where_filter(where: Mapping[str, object] | None) -> dict[str, object]:
 
 def _metadata_matches(metadata: Mapping[str, object], filters: Mapping[str, object]) -> bool:
     return all(key in metadata and metadata[key] == value for key, value in filters.items())
+
+
+def _result_energies(
+    result_ids: Sequence[UUID],
+    activation: ActivationResult,
+) -> dict[UUID, float]:
+    activation_energies = {hit.memory_id: hit.energy for hit in activation.hits}
+    return {memory_id: activation_energies.get(memory_id, 1.0) for memory_id in result_ids}

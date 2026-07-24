@@ -7,9 +7,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
-from synapticdb.models import InvalidArgumentError
+from synapticdb.models import InvalidArgumentError, RecallSource
 
 RRF_K = 60
+ACTIVATION_BLEND_WEIGHT = 0.45
 # TODO(phase-5): this rejects rankings longer than 100, so a bench sweep of
 # candidate depth (PRD §9 parameter 2) past 100 would raise here.
 _MAX_RANKING_LENGTH = 100
@@ -20,6 +21,13 @@ _MAX_SOURCE_COUNT = 4
 class RankedHit:
     memory_id: UUID
     score: float
+
+
+@dataclass(frozen=True, slots=True)
+class BlendedHit:
+    memory_id: UUID
+    score: float
+    via: RecallSource
 
 
 def reciprocal_rank_fusion(
@@ -71,3 +79,54 @@ def min_max_normalize(scores: Mapping[UUID, float]) -> dict[UUID, float]:
         return {memory_id: 1.0 for memory_id in scores}
     width = high - low
     return {memory_id: (float(score) - low) / width for memory_id, score in scores.items()}
+
+
+def blend_rankings(
+    fusion_scores: Mapping[UUID, float],
+    activation_scores: Mapping[UUID, float],
+    confidence: float,
+) -> tuple[BlendedHit, ...]:
+    """Blend normalized source scores and attribute each result."""
+    maturity = _unit_float(confidence, "graph confidence")
+    normalized_fusion = min_max_normalize(fusion_scores)
+    if maturity == 0.0:
+        return tuple(BlendedHit(memory_id, score, "search") for memory_id, score in normalized_fusion.items())
+    normalized_activation = min_max_normalize(activation_scores)
+    alpha = ACTIVATION_BLEND_WEIGHT * maturity
+    ordered_ids = tuple(dict.fromkeys((*normalized_fusion, *normalized_activation)))
+    blended = [
+        BlendedHit(
+            memory_id,
+            (1.0 - alpha) * normalized_fusion.get(memory_id, 0.0)
+            + alpha * normalized_activation.get(memory_id, 0.0),
+            _recall_source(memory_id, normalized_fusion, normalized_activation),
+        )
+        for memory_id in ordered_ids
+    ]
+    source_order = {memory_id: index for index, memory_id in enumerate(ordered_ids)}
+    blended.sort(key=lambda hit: (-hit.score, source_order[hit.memory_id]))
+    return tuple(blended)
+
+
+def _recall_source(
+    memory_id: UUID,
+    fusion_scores: Mapping[UUID, float],
+    activation_scores: Mapping[UUID, float],
+) -> RecallSource:
+    in_fusion = memory_id in fusion_scores
+    in_activation = memory_id in activation_scores
+    if in_fusion and in_activation:
+        return "both"
+    if in_activation:
+        return "association"
+    return "search"
+
+
+def _unit_float(value: float, label: str) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise InvalidArgumentError(f"{label} must be numeric") from exc
+    if not math.isfinite(number) or not 0.0 <= number <= 1.0:
+        raise InvalidArgumentError(f"{label} must be between 0 and 1")
+    return number

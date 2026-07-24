@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from synapticdb import InvalidArgumentError
-from synapticdb.retrieval import min_max_normalize, reciprocal_rank_fusion
+from synapticdb.retrieval import blend_rankings, min_max_normalize, reciprocal_rank_fusion
 
 
 def test_rrf_rewards_overlap_without_an_extra_bonus() -> None:
@@ -43,3 +43,40 @@ def test_min_max_normalize_handles_empty_equal_and_varied_scores() -> None:
     assert min_max_normalize({low: 2.0, high: 2.0}) == {low: 1.0, high: 1.0}
     normalized = min_max_normalize({low: 2.0, middle: 3.0, high: 4.0})
     assert normalized == {low: 0.0, middle: 0.5, high: 1.0}
+
+
+def test_blend_at_zero_confidence_is_exact_fusion() -> None:
+    first, second, association = uuid4(), uuid4(), uuid4()
+
+    blended = blend_rankings(
+        {first: 2.0, second: 1.0},
+        {second: 0.5, association: 1.0},
+        0.0,
+    )
+
+    assert [(hit.memory_id, hit.score, hit.via) for hit in blended] == [
+        (first, 1.0, "search"),
+        (second, 0.0, "search"),
+    ]
+
+
+def test_blend_combines_sources_and_attributes_membership() -> None:
+    search, both, association = uuid4(), uuid4(), uuid4()
+
+    blended = blend_rankings(
+        {search: 2.0, both: 1.0},
+        {both: 1.0, association: 2.0},
+        1.0,
+    )
+
+    assert [(hit.memory_id, hit.score, hit.via) for hit in blended] == [
+        (search, 0.55, "search"),
+        (association, 0.45, "association"),
+        (both, 0.0, "both"),
+    ]
+
+
+@pytest.mark.parametrize("confidence", [-0.1, 1.1, float("nan")])
+def test_blend_rejects_invalid_confidence(confidence: float) -> None:
+    with pytest.raises(InvalidArgumentError, match="graph confidence"):
+        blend_rankings({}, {}, confidence)

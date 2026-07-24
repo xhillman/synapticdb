@@ -21,7 +21,8 @@ from numpy.typing import NDArray
 
 from synapticdb.models import EdgeOrigin, EmbeddingError, InvalidArgumentError, Memory, NotFoundError
 
-_CANDIDATE_LIMIT = 40
+CANDIDATE_LIMIT = 40
+_EDGE_LOOKUP_LIMIT = 400
 _EXPIRE_BATCH_LIMIT = 1000
 _QUERY_TOKEN_LIMIT = 64
 _EDGE_ORIGINS = frozenset({"semantic", "temporal", "co_retrieval", "explicit"})
@@ -417,9 +418,13 @@ class Store:
     def list_edges_for_node(self, memory_id: UUID) -> tuple[Edge, ...]:
         self._require_open()
         self._require_memory_ids((str(memory_id),))
+        # A hub node past the limit degrades to its strongest edges rather
+        # than failing recall; co-retrieval learning makes dense hubs normal.
+        # TODO(phase-5): "strongest" ranks by stored weight; once lazy decay
+        # lands (§6.4), effective weight is the honest ranking.
         rows = self._connection.execute(
-            "SELECT * FROM edges WHERE a = ? OR b = ? ORDER BY rowid",
-            (str(memory_id), str(memory_id)),
+            "SELECT * FROM edges WHERE a = ? OR b = ? ORDER BY weight DESC, rowid LIMIT ?",
+            (str(memory_id), str(memory_id), _EDGE_LOOKUP_LIMIT),
         ).fetchall()
         return tuple(_edge_from_row(row) for row in rows)
 
@@ -548,7 +553,7 @@ class Store:
             )
         return cursor.rowcount
 
-    def keyword_search(self, query: str, limit: int = _CANDIDATE_LIMIT) -> tuple[SearchHit, ...]:
+    def keyword_search(self, query: str, limit: int = CANDIDATE_LIMIT) -> tuple[SearchHit, ...]:
         # bm25 ties break on rowid (insertion order), never on id: ids are
         # random UUIDs, so an id tie-break reorders equal-score results on
         # every reingest and makes benchmark runs irreproducible.
@@ -573,7 +578,7 @@ class Store:
     def semantic_search(
         self,
         query_embedding: Sequence[float],
-        limit: int = _CANDIDATE_LIMIT,
+        limit: int = CANDIDATE_LIMIT,
     ) -> tuple[SearchHit, ...]:
         self._require_open()
         result_limit = _positive_limit(limit, "semantic limit")

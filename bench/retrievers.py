@@ -84,7 +84,7 @@ class FixtureRetriever:
 @dataclass(frozen=True)
 class SynapticConfig:
     embedding: str
-    activation_blend_weight: float = 0.0
+    activation_blend_weight: float = 0.45
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -135,7 +135,32 @@ class SynapticRetriever:
             ranked = tuple(self._benchmark_ids[item.memory.id] for item in result.memories)
         except KeyError as exc:
             raise RuntimeError("Synaptic returned an unknown benchmark memory") from exc
-        return Retrieval(ranked, query_id=str(result.query_id))
+        path_ids = self._path_benchmark_ids(result.query_id)
+        return Retrieval(ranked, path_ids, str(result.query_id))
+
+    def _path_benchmark_ids(self, query_id: UUID) -> tuple[str, ...]:
+        query = self._memory._store.get_query(query_id)
+        path_ids: list[str] = []
+        seen: set[str] = set()
+        for edge_id in query.path_edge_ids:
+            edge = self._memory._store.get_edge(edge_id)
+            self._append_path_memory_ids((edge.a, edge.b), path_ids, seen)
+        return tuple(path_ids)
+
+    def _append_path_memory_ids(
+        self,
+        memory_ids: tuple[UUID, UUID],
+        path_ids: list[str],
+        seen: set[str],
+    ) -> None:
+        for memory_id in memory_ids:
+            benchmark_id = self._benchmark_ids.get(memory_id)
+            if benchmark_id is None:
+                raise RuntimeError("activation path contains an unknown benchmark memory")
+            if benchmark_id in seen:
+                continue
+            path_ids.append(benchmark_id)
+            seen.add(benchmark_id)
 
     def feedback(self, retrieval: Retrieval, *, positive: bool) -> None:
         if not isinstance(retrieval, Retrieval) or not isinstance(positive, bool):
