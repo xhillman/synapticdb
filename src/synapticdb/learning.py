@@ -9,12 +9,28 @@ from uuid import UUID
 
 from synapticdb.models import InvalidArgumentError
 
-ParameterValue = float | int | tuple[float | int, ...]
+ParameterValue = float | int | tuple[float | int, ...] | None
+
+# Calibration values for semantic seeding (PRD §6.1 / §9 group 11). Semantic
+# seeding is DISABLED by default (see default_parameters): the full-corpus
+# benchmark showed it contributes +0 associative unique wins at every threshold
+# from 0.6 to 0.85 — embedding similarity is orthogonal to the benchmark's
+# associative chains, so its edges only duplicate what vector search already
+# ranks together. This tuple re-enables it for calibration / future A/Bs by
+# assigning it to _params["semantic_seed"]. See bench/README.md for the evidence.
+SEMANTIC_SEED_CALIBRATION: tuple[float, int, float] = (0.6, 3, 0.25)
 
 
 @dataclass(frozen=True, slots=True)
 class SemanticSeedConfig:
     threshold: float
+    max_links: int
+    initial_weight: float
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalLinkConfig:
+    window_seconds: int
     max_links: int
     initial_weight: float
 
@@ -32,7 +48,7 @@ def default_parameters() -> dict[str, ParameterValue]:
         "hop_bonus": 0.15,
         "seed_penalty": 0.2,
         "activation_blend_weight": 0.45,
-        "semantic_seed": (0.6, 3, 0.25),
+        "semantic_seed": None,  # disabled by benchmark evidence; see SEMANTIC_SEED_CALIBRATION
         "temporal_link": (600, 3, 0.2),
         "co_retrieval": (0.05, 0.05),
         "feedback_rate": 0.15,
@@ -42,17 +58,36 @@ def default_parameters() -> dict[str, ParameterValue]:
     }
 
 
-def semantic_seed_config(params: Mapping[str, ParameterValue]) -> SemanticSeedConfig:
-    """Read and validate the semantic seed parameter group."""
+def semantic_seed_config(params: Mapping[str, ParameterValue]) -> SemanticSeedConfig | None:
+    """Read the semantic seed parameter group; None means the mechanism is off."""
     value = params.get("semantic_seed")
+    if value is None:
+        return None
     if not isinstance(value, tuple) or len(value) != 3:
         raise InvalidArgumentError("semantic_seed must contain threshold, max links, and weight")
     threshold = _unit_float(value[0], "semantic seed threshold")
-    max_links = value[1]
+    max_links = _bounded_int(value[1], "semantic seed max links", 40)
     weight = _unit_float(value[2], "semantic seed weight")
-    if isinstance(max_links, bool) or not isinstance(max_links, int) or not 1 <= max_links <= 40:
-        raise InvalidArgumentError("semantic seed max links must be between 1 and 40")
     return SemanticSeedConfig(threshold, max_links, weight)
+
+
+def temporal_link_config(params: Mapping[str, ParameterValue]) -> TemporalLinkConfig:
+    """Read and validate the temporal link parameter group."""
+    value = params.get("temporal_link")
+    if not isinstance(value, tuple) or len(value) != 3:
+        raise InvalidArgumentError("temporal_link must contain window, max links, and weight")
+    window = _bounded_int(value[0], "temporal window", 86_400)
+    max_links = _bounded_int(value[1], "temporal max links", 40)
+    weight = _unit_float(value[2], "temporal link weight")
+    return TemporalLinkConfig(window, max_links, weight)
+
+
+def passive_reinforcement_rate(params: Mapping[str, ParameterValue]) -> float:
+    """Return the passive reinforcement rate shared by learning mechanisms."""
+    value = params.get("co_retrieval")
+    if not isinstance(value, tuple) or len(value) != 2:
+        raise InvalidArgumentError("co_retrieval must contain initial weight and reinforcement rate")
+    return _unit_float(value[1], "passive reinforcement rate")
 
 
 def semantic_seed_ids(
@@ -80,6 +115,12 @@ def reinforce_weight(weight: float, rate: float) -> float:
     stored_weight = _unit_float(weight, "edge weight")
     reinforcement_rate = _unit_float(rate, "reinforcement rate")
     return stored_weight + reinforcement_rate * (1.0 - stored_weight)
+
+
+def _bounded_int(value: float | int, label: str, maximum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= maximum:
+        raise InvalidArgumentError(f"{label} must be between 1 and {maximum}")
+    return value
 
 
 def _unit_float(value: float | int, label: str) -> float:

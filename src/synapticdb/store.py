@@ -19,13 +19,16 @@ from uuid import UUID, uuid4
 import numpy as np
 from numpy.typing import NDArray
 
+from synapticdb.learning import reinforce_weight
 from synapticdb.models import EdgeOrigin, EmbeddingError, InvalidArgumentError, Memory, NotFoundError
 
 CANDIDATE_LIMIT = 40
 _EDGE_LOOKUP_LIMIT = 400
-_MEMORY_EDGE_LIMIT = 40
+_MEMORY_EDGE_LIMIT = 80
 _EXPIRE_BATCH_LIMIT = 1000
 _QUERY_TOKEN_LIMIT = 64
+_TEMPORAL_LINK_LIMIT = 40
+_TEMPORAL_WINDOW_LIMIT = 86_400
 _EDGE_ORIGINS = frozenset({"semantic", "temporal", "co_retrieval", "explicit"})
 _WORD_PATTERN = re.compile(r"\w+", flags=re.UNICODE)
 _SCHEMA_VERSION = 1
@@ -52,13 +55,13 @@ class EdgeSeed:
     memory_id: UUID
     weight: float
     origin: EdgeOrigin
+    reinforce_rate: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class MemoryInsert:
     memory: Memory
     inserted: bool
-    edges: tuple[Edge, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,18 +113,13 @@ class _PreparedQuery:
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
+    key TEXT PRIMARY KEY, value TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS memories (
-    id TEXT PRIMARY KEY,
-    content TEXT NOT NULL,
-    content_hash TEXT NOT NULL UNIQUE,
-    metadata TEXT NOT NULL DEFAULT '{}',
-    embedding BLOB NOT NULL,
-    created_at TEXT NOT NULL,
-    last_accessed_at TEXT NOT NULL,
+    id TEXT PRIMARY KEY, content TEXT NOT NULL,
+    content_hash TEXT NOT NULL UNIQUE, metadata TEXT NOT NULL DEFAULT '{}',
+    embedding BLOB NOT NULL, created_at TEXT NOT NULL, last_accessed_at TEXT NOT NULL,
     access_count INTEGER NOT NULL DEFAULT 0 CHECK (access_count >= 0)
 );
 
@@ -133,40 +131,28 @@ CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
     INSERT INTO memories_fts(rowid, content) VALUES (new.rowid, new.content);
 END;
 CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-    INSERT INTO memories_fts(memories_fts, rowid, content)
-    VALUES ('delete', old.rowid, old.content);
+    INSERT INTO memories_fts(memories_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
 END;
 CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE OF content ON memories BEGIN
-    INSERT INTO memories_fts(memories_fts, rowid, content)
-    VALUES ('delete', old.rowid, old.content);
+    INSERT INTO memories_fts(memories_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
     INSERT INTO memories_fts(rowid, content) VALUES (new.rowid, new.content);
 END;
 
 CREATE TABLE IF NOT EXISTS edges (
-    id TEXT PRIMARY KEY,
-    a TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    id TEXT PRIMARY KEY, a TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
     b TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
     weight REAL NOT NULL CHECK (weight >= 0.0 AND weight <= 1.0),
-    origin TEXT NOT NULL CHECK (
-        origin IN ('semantic', 'temporal', 'co_retrieval', 'explicit')
-    ),
-    created_at TEXT NOT NULL,
-    last_reinforced_at TEXT NOT NULL,
-    reinforcement_count INTEGER NOT NULL DEFAULT 0
-        CHECK (reinforcement_count >= 0),
-    UNIQUE (a, b),
-    CHECK (a < b)
+    origin TEXT NOT NULL CHECK (origin IN ('semantic', 'temporal', 'co_retrieval', 'explicit')),
+    created_at TEXT NOT NULL, last_reinforced_at TEXT NOT NULL,
+    reinforcement_count INTEGER NOT NULL DEFAULT 0 CHECK (reinforcement_count >= 0),
+    UNIQUE (a, b), CHECK (a < b)
 );
 CREATE INDEX IF NOT EXISTS idx_edges_a ON edges(a);
 CREATE INDEX IF NOT EXISTS idx_edges_b ON edges(b);
 
 CREATE TABLE IF NOT EXISTS queries (
-    id TEXT PRIMARY KEY,
-    text TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    result_ids TEXT NOT NULL,
-    energies TEXT NOT NULL,
-    path_edge_ids TEXT NOT NULL,
+    id TEXT PRIMARY KEY, text TEXT NOT NULL, created_at TEXT NOT NULL,
+    result_ids TEXT NOT NULL, energies TEXT NOT NULL, path_edge_ids TEXT NOT NULL,
     feedback INTEGER CHECK (feedback IS NULL OR feedback IN (-1, 1))
 );
 
@@ -280,7 +266,7 @@ class Store:
                 (content_hash,),
             ).fetchone()
             if existing is not None:
-                return MemoryInsert(_memory_from_row(existing), False, ())
+                return MemoryInsert(_memory_from_row(existing), False)
             self._require_memory_ids(tuple(str(seed.memory_id) for seed in seeds))
             self._connection.execute(
                 """
@@ -300,13 +286,10 @@ class Store:
                 ),
             )
             row = self._required_memory_row(identifier)
-            edge_rows = tuple(
-                self._insert_edge_row(identifier, seed, timestamp)
-                for seed in seeds
-            )
+            for seed in seeds:
+                self._write_edge(identifier, seed, timestamp)
         self._append_vector_cache(identifier, vector)
-        edges = tuple(_edge_from_row(edge_row) for edge_row in edge_rows)
-        return MemoryInsert(_memory_from_row(row), True, edges)
+        return MemoryInsert(_memory_from_row(row), True)
 
     def get_memory(self, memory_id: UUID) -> Memory:
         self._require_open()
@@ -327,6 +310,32 @@ class Store:
         if missing:
             raise NotFoundError(f"unknown memory_id: {missing[0]}")
         return tuple(by_id[identifier] for identifier in identifiers)
+
+    def recent_memory_ids(
+        self,
+        *,
+        before: datetime,
+        window_seconds: int,
+        limit: int,
+    ) -> tuple[UUID, ...]:
+        """Return the most recent bounded memory IDs inside a UTC window."""
+        self._require_open()
+        timestamp = _require_utc(before, "before")
+        window = _positive_limit(window_seconds, "temporal window")
+        result_limit = _positive_limit(limit, "temporal limit")
+        if window > _TEMPORAL_WINDOW_LIMIT or result_limit > _TEMPORAL_LINK_LIMIT:
+            raise InvalidArgumentError("temporal lookup exceeds its bounded limits")
+        cutoff = timestamp - timedelta(seconds=window)
+        rows = self._connection.execute(
+            """
+            SELECT id FROM memories
+            WHERE created_at >= ? AND created_at <= ?
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT ?
+            """,
+            (cutoff.isoformat(), timestamp.isoformat(), result_limit),
+        ).fetchall()
+        return tuple(UUID(row["id"]) for row in rows)
 
     def forget_memory(self, memory_id: UUID) -> None:
         self._require_open()
@@ -421,19 +430,19 @@ class Store:
         with self._connection:
             self._require_memory_ids((str(a), str(b)))
             seed = EdgeSeed(b, stored_weight, stored_origin)
-            self._insert_edge_row(a, seed, timestamp)
+            self._write_edge(a, seed, timestamp)
             row = self._required_edge_row(edge_id)
         return _edge_from_row(row)
 
-    def _insert_edge_row(
+    def _write_edge(
         self,
         memory_id: UUID,
         seed: EdgeSeed,
         timestamp: datetime,
-    ) -> sqlite3.Row:
+    ) -> None:
         a, b = _canonical_pair(memory_id, seed.memory_id)
         edge_id = _edge_id(a, b)
-        self._connection.execute(
+        cursor = self._connection.execute(
             """
             INSERT INTO edges (
                 id, a, b, weight, origin, created_at,
@@ -451,7 +460,23 @@ class Store:
                 timestamp.isoformat(),
             ),
         )
-        return self._required_edge_row(edge_id)
+        if cursor.rowcount not in (0, 1):
+            raise RuntimeError("edge insert returned an invalid row count")
+        if cursor.rowcount == 1 or seed.reinforce_rate is None:
+            return
+        row = self._required_edge_row(edge_id)
+        weight = reinforce_weight(float(row["weight"]), seed.reinforce_rate)
+        update = self._connection.execute(
+            """
+            UPDATE edges
+            SET weight = ?, last_reinforced_at = ?,
+                reinforcement_count = reinforcement_count + 1
+            WHERE id = ?
+            """,
+            (weight, timestamp.isoformat(), edge_id),
+        )
+        if update.rowcount != 1:
+            raise RuntimeError("edge reinforcement did not update one row")
 
     def get_edge(self, edge_id: str) -> Edge:
         self._require_open()
@@ -792,11 +817,18 @@ def _prepare_edge_seeds(edge_seeds: Sequence[EdgeSeed]) -> tuple[EdgeSeed, ...]:
         raise InvalidArgumentError(f"a memory accepts at most {_MEMORY_EDGE_LIMIT} initial edges")
     if not all(isinstance(seed, EdgeSeed) for seed in seeds):
         raise InvalidArgumentError("edge seeds must be EdgeSeed values")
-    identifiers = tuple(seed.memory_id for seed in seeds)
-    if len(set(identifiers)) != len(identifiers):
-        raise InvalidArgumentError("edge seeds must contain unique memory IDs")
+    if not all(isinstance(seed.memory_id, UUID) for seed in seeds):
+        raise InvalidArgumentError("edge seed memory IDs must be UUID values")
+    mechanism_keys = tuple((seed.memory_id, seed.origin) for seed in seeds)
+    if len(set(mechanism_keys)) != len(mechanism_keys):
+        raise InvalidArgumentError("edge seeds must be unique per memory and origin")
     return tuple(
-        EdgeSeed(seed.memory_id, _unit_float(seed.weight, "weight"), _edge_origin(seed.origin))
+        EdgeSeed(
+            seed.memory_id,
+            _unit_float(seed.weight, "weight"),
+            _edge_origin(seed.origin),
+            None if seed.reinforce_rate is None else _unit_float(seed.reinforce_rate, "reinforce rate"),
+        )
         for seed in seeds
     )
 

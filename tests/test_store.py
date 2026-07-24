@@ -91,9 +91,10 @@ def test_memory_and_initial_edges_commit_atomically(store: Store) -> None:
         ),
     )
     assert result.inserted is True
-    assert len(result.edges) == 2
-    assert {edge.origin for edge in result.edges} == {"semantic"}
-    assert {edge.weight for edge in result.edges} == {0.25}
+    edges = store.list_edges_for_node(result.memory.id)
+    assert len(edges) == 2
+    assert {edge.origin for edge in edges} == {"semantic"}
+    assert {edge.weight for edge in edges} == {0.25}
 
 
 def test_deduplicated_memory_does_not_create_new_edges(store: Store) -> None:
@@ -107,7 +108,6 @@ def test_deduplicated_memory_does_not_create_new_edges(store: Store) -> None:
     )
     assert result.memory == original
     assert result.inserted is False
-    assert result.edges == ()
     assert store.graph_summary().edge_count == 0
 
 
@@ -156,6 +156,31 @@ def test_get_memories_preserves_order_and_rejects_unknown_ids(store: Store) -> N
     assert [memory.id for memory in store.get_memories((second_id, first_id))] == [second_id, first_id]
     with pytest.raises(NotFoundError):
         store.get_memories((first_id, uuid4()))
+
+
+def test_recent_memory_ids_applies_timestamp_window_order_and_limit(tmp_path: Path) -> None:
+    db_path = tmp_path / "recent.db"
+    started = datetime(2026, 7, 23, 12, 0, tzinfo=timezone.utc)
+    with Store(db_path) as first:
+        boundary_id = remember(first, "boundary", created_at=started)
+        second_id = remember(first, "second", created_at=started + timedelta(seconds=100))
+        third_id = remember(first, "third", created_at=started + timedelta(seconds=200))
+        remember(first, "future", created_at=started + timedelta(seconds=601))
+    with Store(db_path) as reopened:
+        recent = reopened.recent_memory_ids(
+            before=started + timedelta(seconds=600),
+            window_seconds=600,
+            limit=2,
+        )
+        assert recent == (third_id, second_id)
+        all_in_window = reopened.recent_memory_ids(
+            before=started + timedelta(seconds=600),
+            window_seconds=600,
+            limit=3,
+        )
+        assert all_in_window == (third_id, second_id, boundary_id)
+        with pytest.raises(InvalidArgumentError, match="bounded limits"):
+            reopened.recent_memory_ids(before=started, window_seconds=86_401, limit=3)
 
 
 def test_bump_access_updates_all_rows_atomically(store: Store) -> None:

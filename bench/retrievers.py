@@ -7,17 +7,19 @@ import math
 import re
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 from uuid import UUID
 
 from synapticdb import Synaptic
 from synapticdb.embeddings import EmbeddingFunction
-from synapticdb.learning import semantic_seed_config
+from synapticdb.learning import semantic_seed_config, temporal_link_config
 
 from .contracts import MAX_FIXTURE_DIMENSIONS, MAX_MEMORY_COUNT, MAX_RECORD_CHARS, MAX_TOP_K
 from .dataset import MemoryRecord
 
 _TOKEN = re.compile(r"[a-z0-9_]+")
+_INGEST_EPOCH = datetime(2030, 1, 1, tzinfo=timezone.utc)
 
 
 @dataclass(frozen=True)
@@ -86,9 +88,13 @@ class FixtureRetriever:
 class SynapticConfig:
     embedding: str
     activation_blend_weight: float = 0.45
-    semantic_seed_threshold: float = 0.6
-    semantic_seed_max_links: int = 3
-    semantic_seed_weight: float = 0.25
+    # None when semantic seeding is disabled (the shipped default).
+    semantic_seed_threshold: float | None = None
+    semantic_seed_max_links: int | None = None
+    semantic_seed_weight: float | None = None
+    temporal_window_seconds: int = 600
+    temporal_max_links: int = 3
+    temporal_weight: float = 0.2
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -105,27 +111,30 @@ class SynapticRetriever:
         *,
         embedding_name: str = "default",
         semantic_seed: tuple[float, int, float] | None = None,
+        temporal_link: tuple[int, int, float] | None = None,
     ) -> None:
         if not embedding_name:
             raise ValueError("embedding_name must be non-empty")
         self._memory = Synaptic(":memory:", embedding_fn=embedding_fn)
         if semantic_seed is not None:
             self._memory._params["semantic_seed"] = semantic_seed
+        if temporal_link is not None:
+            self._memory._params["temporal_link"] = temporal_link
         semantic = semantic_seed_config(self._memory._params)
+        temporal = temporal_link_config(self._memory._params)
         self.config = SynapticConfig(
             embedding=embedding_name,
-            semantic_seed_threshold=semantic.threshold,
-            semantic_seed_max_links=semantic.max_links,
-            semantic_seed_weight=semantic.initial_weight,
+            semantic_seed_threshold=None if semantic is None else semantic.threshold,
+            semantic_seed_max_links=None if semantic is None else semantic.max_links,
+            semantic_seed_weight=None if semantic is None else semantic.initial_weight,
+            temporal_window_seconds=temporal.window_seconds,
+            temporal_max_links=temporal.max_links,
+            temporal_weight=temporal.initial_weight,
         )
         self._benchmark_ids: dict[UUID, str] = {}
         self._ingested = False
 
     def ingest(self, memories: Sequence[MemoryRecord], *, seed: int) -> None:
-        # TODO(phase-5): PRD §10 requires a controlled ingestion schedule for
-        # the 600 s temporal window, but Synaptic.remember() offers no
-        # timestamp injection — ingesting in a tight loop would put every
-        # consecutive pair in-window. Add a hook before temporal learning lands.
         del seed
         if self._ingested:
             raise RuntimeError("synaptic benchmark retriever only accepts one ingest")
@@ -134,7 +143,8 @@ class SynapticRetriever:
         if len({memory.benchmark_id for memory in memories}) != len(memories):
             raise ValueError("synaptic memory IDs must be unique")
         for record in memories:
-            memory = self._memory.remember(record.content, record.metadata)
+            created_at = _INGEST_EPOCH + timedelta(seconds=record.ingest_offset_seconds)
+            memory = self._memory._remember_at(record.content, record.metadata, created_at)
             self._benchmark_ids[memory.id] = record.benchmark_id
         if len(self._benchmark_ids) != len(memories):
             raise RuntimeError("benchmark corpus contains duplicate memory content")

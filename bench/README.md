@@ -56,6 +56,27 @@ hits and 17/25 associative hits. Path-backed unique wins remained 0/25 because
 activation does not exist yet. The full learning gate therefore fails as
 expected until later phases add association paths.
 
+Phase 5 learning milestones are recorded separately:
+
+- `bench/records/phase5-1-semantic-seeding/`
+- `bench/records/phase5-2-temporal-proximity/`
+
+The Phase 5.2 record preserves 25/25 direct hits and 17/25 associative hits.
+Temporal proximity raises path-backed associative unique wins from 0/25 to
+7/25. The complete Phase 5 gate remains open until later learning mechanisms
+reach 10/25 unique wins.
+
+**Semantic seeding is disabled by default** (`_params["semantic_seed"] = None`).
+A full-corpus A/B and a threshold sweep showed it contributes +0 unique wins at
+every threshold from 0.60 to 0.85: temporal-only and semantic+temporal both
+score 7/25, because embedding similarity is orthogonal to the benchmark's
+associative chains (a 0.60 threshold produced 1069 semantic edges, only 4 of
+them on real chains). Per the merge-gate rule (a mechanism ships only if it
+improves the benchmark), it does not ship enabled. The code and
+`SEMANTIC_SEED_CALIBRATION` values remain; pass `--semantic-threshold` to the
+bench (or set `_params["semantic_seed"]`) to re-run the A/B in a later phase —
+e.g. once co-retrieval and feedback might reinforce a useful edge subset.
+
 Gold relevance IDs, required path IDs, and corpus `linked_memory_ids` are
 owned by the evaluator. Retriever implementations receive none of them. Phase
 3 reports no `path_benchmark_ids`. Activation will translate stored path

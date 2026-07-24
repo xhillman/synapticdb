@@ -1,10 +1,12 @@
 from collections.abc import Sequence
+from datetime import datetime, timedelta, timezone
 from typing import cast
 from uuid import uuid4
 
 import pytest
 
 from synapticdb import InvalidArgumentError, NotFoundError, Synaptic
+from synapticdb.learning import SEMANTIC_SEED_CALIBRATION
 from synapticdb.retrieval import min_max_normalize, reciprocal_rank_fusion
 
 
@@ -43,10 +45,29 @@ def test_recall_alpha_zero_scores_equal_normalized_rrf() -> None:
         )
 
 
-def test_remember_seeds_top_three_semantic_edges() -> None:
+def test_semantic_seeding_is_disabled_by_default() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with Synaptic(":memory:", embedding_fn=embedding) as memory:
-        existing = tuple(memory.remember(f"alpha memory {index}") for index in range(4))
-        newest = memory.remember("alpha newest")
+        first = memory._remember_at("alpha first", None, started)
+        # Far outside the temporal window, so any edge would be semantic.
+        second = memory._remember_at("alpha second", None, started + timedelta(seconds=3600))
+        assert memory._store.get_edge_between(first.id, second.id) is None
+        assert memory.stats().edges_by_origin["semantic"] == 0
+
+
+def test_remember_seeds_top_three_semantic_edges() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        memory._params["semantic_seed"] = SEMANTIC_SEED_CALIBRATION
+        existing = tuple(
+            memory._remember_at(
+                f"alpha memory {index}",
+                None,
+                started + timedelta(seconds=601 * index),
+            )
+            for index in range(4)
+        )
+        newest = memory._remember_at("alpha newest", None, started + timedelta(seconds=601 * 4))
         edges = memory._store.list_edges_for_node(newest.id)
         assert len(edges) == 3
         assert {edge.a if edge.b == newest.id else edge.b for edge in edges} == {
@@ -56,19 +77,51 @@ def test_remember_seeds_top_three_semantic_edges() -> None:
 
 
 def test_private_semantic_parameters_support_benchmark_calibration() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with Synaptic(":memory:", embedding_fn=embedding) as memory:
         memory._params["semantic_seed"] = (0.8, 1, 0.4)
-        first = memory.remember("alpha first")
-        second = memory.remember("alpha second")
+        first = memory._remember_at("alpha first", None, started)
+        second = memory._remember_at("alpha second", None, started + timedelta(seconds=601))
         edge = memory._store.get_edge_between(first.id, second.id)
         assert edge is not None
         assert edge.weight == 0.4
 
 
-def test_recall_persists_unit_energies_for_fusion_only_results() -> None:
+def test_remember_links_temporal_boundary_and_skips_outside_window() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with Synaptic(":memory:", embedding_fn=embedding) as memory:
-        first = memory.remember("alpha beta")
-        second = memory.remember("alpha delta delta delta")
+        first = memory._remember_at("alpha first", None, started)
+        boundary = memory._remember_at("gamma boundary", None, started + timedelta(seconds=600))
+        outside = memory._remember_at("alpha outside", None, started + timedelta(seconds=1201))
+        edge = memory._store.get_edge_between(first.id, boundary.id)
+        assert edge is not None
+        assert edge.origin == "temporal"
+        assert edge.weight == 0.2
+        assert memory._store.get_edge_between(boundary.id, outside.id) is None
+
+
+def test_semantic_and_temporal_overlap_reinforces_one_edge() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        memory._params["semantic_seed"] = SEMANTIC_SEED_CALIBRATION
+        first = memory._remember_at("alpha first", None, started)
+        second = memory._remember_at("alpha second", None, started + timedelta(seconds=1))
+        edge = memory._store.get_edge_between(first.id, second.id)
+        assert edge is not None
+        assert edge.origin == "semantic"
+        assert edge.weight == pytest.approx(0.2875)
+        assert edge.reinforcement_count == 1
+
+
+def test_recall_persists_unit_energies_for_fusion_only_results() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        first = memory._remember_at("alpha beta", None, started)
+        second = memory._remember_at(
+            "alpha delta delta delta",
+            None,
+            started + timedelta(seconds=601),
+        )
         result = memory.recall("alpha", top_k=2)
         stored = memory._store.get_query(result.query_id)
         assert stored.energies == {first.id: 1.0, second.id: 1.0}

@@ -27,9 +27,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--no-write", action="store_true")
     parser.add_argument("--check", action="store_true", help="Return a nonzero status when the candidate gate fails")
-    parser.add_argument("--semantic-threshold", type=float, default=0.6)
+    # Semantic seeding is off by default (disabled on benchmark evidence);
+    # pass --semantic-threshold to re-enable it for a calibration run.
+    parser.add_argument("--semantic-threshold", type=float, default=None)
     parser.add_argument("--semantic-max-links", type=int, default=3)
     parser.add_argument("--semantic-weight", type=float, default=0.25)
+    parser.add_argument("--temporal-window", type=int, default=600)
+    parser.add_argument("--temporal-max-links", type=int, default=3)
+    parser.add_argument("--temporal-weight", type=float, default=0.2)
     return parser.parse_args()
 
 
@@ -55,14 +60,26 @@ def main() -> int:
     seeds = _parse_seeds(args.seeds)
     expected = (50, 5, 5) if args.profile == "smoke" else (500, 25, 25)
     dataset = load_dataset(ROOT / "data" / args.profile, expected_counts=expected)
-    semantic_seed = (args.semantic_threshold, args.semantic_max_links, args.semantic_weight)
+    semantic_seed = (
+        None
+        if args.semantic_threshold is None
+        else (args.semantic_threshold, args.semantic_max_links, args.semantic_weight)
+    )
+    temporal_link = (args.temporal_window, args.temporal_max_links, args.temporal_weight)
     factories: dict[str, Callable[[], Retriever]] = {
         "fixture": FixtureRetriever,
         "baseline": LockedBaseline,
         "synaptic": (
-            (lambda: SynapticRetriever(_fixture_embedding, embedding_name="fixture", semantic_seed=semantic_seed))
+            (
+                lambda: SynapticRetriever(
+                    _fixture_embedding,
+                    embedding_name="fixture",
+                    semantic_seed=semantic_seed,
+                    temporal_link=temporal_link,
+                )
+            )
             if args.profile == "smoke"
-            else (lambda: SynapticRetriever(semantic_seed=semantic_seed))
+            else (lambda: SynapticRetriever(semantic_seed=semantic_seed, temporal_link=temporal_link))
         ),
     }
     selected = factories[args.retriever]

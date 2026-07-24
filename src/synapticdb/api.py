@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
 from uuid import UUID
@@ -20,8 +21,10 @@ from synapticdb.embeddings import Embedder, EmbeddingFunction
 from synapticdb.learning import (
     ParameterValue,
     default_parameters,
+    passive_reinforcement_rate,
     semantic_seed_config,
     semantic_seed_ids,
+    temporal_link_config,
 )
 from synapticdb.models import InvalidArgumentError, Memory, Recalled, RecallResult, Stats
 from synapticdb.retrieval import (
@@ -64,19 +67,59 @@ class Synaptic:
         content: str,
         metadata: Mapping[str, object] | None = None,
     ) -> Memory:
+        return self._remember_at(content, metadata, datetime.now(timezone.utc))
+
+    def _remember_at(
+        self,
+        content: str,
+        metadata: Mapping[str, object] | None,
+        created_at: datetime,
+    ) -> Memory:
         self._require_open()
         text = _bounded_text(content, "content")
         stored_metadata = _metadata(metadata)
         embedding = self._embedder.embed(text)
-        config = semantic_seed_config(self._params)
-        candidates = self._store.semantic_search(embedding, limit=config.max_links)
-        candidate_scores = tuple((hit.memory_id, hit.score) for hit in candidates)
-        linked_ids = semantic_seed_ids(candidate_scores, config)
-        seeds = tuple(EdgeSeed(memory_id, config.initial_weight, "semantic") for memory_id in linked_ids)
-        result = self._store.insert_memory_with_edges(text, stored_metadata, embedding, seeds)
+        seeds = self._load_remember_edge_seeds(embedding, created_at)
+        result = self._store.insert_memory_with_edges(
+            text,
+            stored_metadata,
+            embedding,
+            seeds,
+            created_at=created_at,
+        )
         if result.inserted:
             self._confidence.invalidate()
         return result.memory
+
+    def _load_remember_edge_seeds(
+        self,
+        embedding: Sequence[float],
+        created_at: datetime,
+    ) -> tuple[EdgeSeed, ...]:
+        rate = passive_reinforcement_rate(self._params)
+        # Semantic seeding is off by default (disabled on benchmark evidence);
+        # only runs the extra semantic_search when explicitly re-enabled.
+        semantic = semantic_seed_config(self._params)
+        semantic_seeds: tuple[EdgeSeed, ...] = ()
+        if semantic is not None:
+            candidates = self._store.semantic_search(embedding, limit=semantic.max_links)
+            scores = tuple((hit.memory_id, hit.score) for hit in candidates)
+            semantic_ids = semantic_seed_ids(scores, semantic)
+            semantic_seeds = tuple(
+                EdgeSeed(memory_id, semantic.initial_weight, "semantic", rate)
+                for memory_id in semantic_ids
+            )
+        temporal = temporal_link_config(self._params)
+        temporal_ids = self._store.recent_memory_ids(
+            before=created_at,
+            window_seconds=temporal.window_seconds,
+            limit=temporal.max_links,
+        )
+        temporal_seeds = tuple(
+            EdgeSeed(memory_id, temporal.initial_weight, "temporal", rate)
+            for memory_id in temporal_ids
+        )
+        return semantic_seeds + temporal_seeds
 
     def recall(
         self,
