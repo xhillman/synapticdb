@@ -33,7 +33,7 @@ def test_remember_recall_and_dedupe_form_a_walking_skeleton() -> None:
 def test_recall_alpha_zero_scores_equal_normalized_rrf() -> None:
     with Synaptic(":memory:", embedding_fn=embedding) as memory:
         first = memory.remember("alpha alpha alpha alpha")
-        second = memory.remember("alpha gamma")
+        second = memory.remember("alpha delta delta delta")
         result = memory.recall("alpha", top_k=2)
         expected_fusion = reciprocal_rank_fusion(((first.id, second.id), (first.id, second.id)))
         expected = min_max_normalize({hit.memory_id: hit.score for hit in expected_fusion})
@@ -43,10 +43,32 @@ def test_recall_alpha_zero_scores_equal_normalized_rrf() -> None:
         )
 
 
+def test_remember_seeds_top_three_semantic_edges() -> None:
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        existing = tuple(memory.remember(f"alpha memory {index}") for index in range(4))
+        newest = memory.remember("alpha newest")
+        edges = memory._store.list_edges_for_node(newest.id)
+        assert len(edges) == 3
+        assert {edge.a if edge.b == newest.id else edge.b for edge in edges} == {
+            item.id for item in existing[:3]
+        }
+        assert all(edge.origin == "semantic" and edge.weight == 0.25 for edge in edges)
+
+
+def test_private_semantic_parameters_support_benchmark_calibration() -> None:
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        memory._params["semantic_seed"] = (0.8, 1, 0.4)
+        first = memory.remember("alpha first")
+        second = memory.remember("alpha second")
+        edge = memory._store.get_edge_between(first.id, second.id)
+        assert edge is not None
+        assert edge.weight == 0.4
+
+
 def test_recall_persists_unit_energies_for_fusion_only_results() -> None:
     with Synaptic(":memory:", embedding_fn=embedding) as memory:
         first = memory.remember("alpha beta")
-        second = memory.remember("alpha gamma")
+        second = memory.remember("alpha delta delta delta")
         result = memory.recall("alpha", top_k=2)
         stored = memory._store.get_query(result.query_id)
         assert stored.energies == {first.id: 1.0, second.id: 1.0}
@@ -68,7 +90,7 @@ def test_recall_blends_association_and_persists_activation_evidence() -> None:
         assert recalled[associated.id].via == "association"
         assert recalled[associated.id].score > 0.0
         assert stored.energies[associated.id] == pytest.approx(0.8)
-        assert stored.path_edge_ids == (edge.id,)
+        assert edge.id in stored.path_edge_ids
 
 
 def test_where_filter_requires_present_equal_metadata() -> None:

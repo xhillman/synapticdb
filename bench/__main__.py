@@ -27,6 +27,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--no-write", action="store_true")
     parser.add_argument("--check", action="store_true", help="Return a nonzero status when the candidate gate fails")
+    parser.add_argument("--semantic-threshold", type=float, default=0.6)
+    parser.add_argument("--semantic-max-links", type=int, default=3)
+    parser.add_argument("--semantic-weight", type=float, default=0.25)
     return parser.parse_args()
 
 
@@ -52,13 +55,14 @@ def main() -> int:
     seeds = _parse_seeds(args.seeds)
     expected = (50, 5, 5) if args.profile == "smoke" else (500, 25, 25)
     dataset = load_dataset(ROOT / "data" / args.profile, expected_counts=expected)
+    semantic_seed = (args.semantic_threshold, args.semantic_max_links, args.semantic_weight)
     factories: dict[str, Callable[[], Retriever]] = {
         "fixture": FixtureRetriever,
         "baseline": LockedBaseline,
         "synaptic": (
-            (lambda: SynapticRetriever(_fixture_embedding, embedding_name="fixture"))
+            (lambda: SynapticRetriever(_fixture_embedding, embedding_name="fixture", semantic_seed=semantic_seed))
             if args.profile == "smoke"
-            else SynapticRetriever
+            else (lambda: SynapticRetriever(semantic_seed=semantic_seed))
         ),
     }
     selected = factories[args.retriever]

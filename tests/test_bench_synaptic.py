@@ -19,6 +19,9 @@ def test_synaptic_retriever_runs_the_smoke_benchmark_without_models() -> None:
     assert report.candidate_config == {
         "embedding": "fixture",
         "activation_blend_weight": 0.45,
+        "semantic_seed_threshold": 0.6,
+        "semantic_seed_max_links": 3,
+        "semantic_seed_weight": 0.25,
     }
     assert len(report.runs[0].queries) == 10
 
@@ -37,5 +40,19 @@ def test_synaptic_retriever_returns_activation_path_memory_ids() -> None:
         result = retriever.recall("alpha", top_k=2)
 
         assert set(result.path_benchmark_ids) == {"first", "second"}
+    finally:
+        retriever.close()
+
+
+def test_synaptic_retriever_applies_benchmark_semantic_parameters() -> None:
+    retriever = SynapticRetriever(
+        _fixture_embedding,
+        embedding_name="fixture",
+        semantic_seed=(0.8, 1, 0.4),
+    )
+    try:
+        assert retriever.config.semantic_seed_threshold == 0.8
+        assert retriever.config.semantic_seed_max_links == 1
+        assert retriever.config.semantic_seed_weight == 0.4
     finally:
         retriever.close()

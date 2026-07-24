@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from synapticdb import EmbeddingError, InvalidArgumentError, NotFoundError
-from synapticdb.store import Store
+from synapticdb.store import EdgeSeed, Store
 
 
 @pytest.fixture
@@ -76,6 +76,54 @@ def test_content_hash_dedupe_returns_existing_memory(store: Store) -> None:
     assert duplicate == first
     assert duplicate.content == "  Fact\r\n"
     assert duplicate.metadata == {"version": 1}
+
+
+def test_memory_and_initial_edges_commit_atomically(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    result = store.insert_memory_with_edges(
+        "linked memory",
+        {},
+        (1.0, 0.0),
+        (
+            EdgeSeed(first_id, 0.25, "semantic"),
+            EdgeSeed(second_id, 0.25, "semantic"),
+        ),
+    )
+    assert result.inserted is True
+    assert len(result.edges) == 2
+    assert {edge.origin for edge in result.edges} == {"semantic"}
+    assert {edge.weight for edge in result.edges} == {0.25}
+
+
+def test_deduplicated_memory_does_not_create_new_edges(store: Store) -> None:
+    first_id = remember(store, "first")
+    original = store.insert_memory("duplicate", {}, (1.0, 0.0))
+    result = store.insert_memory_with_edges(
+        " duplicate ",
+        {},
+        (1.0, 0.0),
+        (EdgeSeed(first_id, 0.25, "semantic"),),
+    )
+    assert result.memory == original
+    assert result.inserted is False
+    assert result.edges == ()
+    assert store.graph_summary().edge_count == 0
+
+
+def test_unknown_edge_seed_rolls_back_memory_insert(store: Store) -> None:
+    remember(store, "existing")
+    before = store.graph_summary()
+    with pytest.raises(NotFoundError):
+        store.insert_memory_with_edges(
+            "must roll back",
+            {},
+            (1.0, 0.0),
+            (EdgeSeed(uuid4(), 0.25, "semantic"),),
+        )
+    after = store.graph_summary()
+    assert after == before
+    assert store.keyword_search("rollback") == ()
 
 
 @pytest.mark.parametrize(

@@ -23,6 +23,7 @@ from synapticdb.models import EdgeOrigin, EmbeddingError, InvalidArgumentError, 
 
 CANDIDATE_LIMIT = 40
 _EDGE_LOOKUP_LIMIT = 400
+_MEMORY_EDGE_LIMIT = 40
 _EXPIRE_BATCH_LIMIT = 1000
 _QUERY_TOKEN_LIMIT = 64
 _EDGE_ORIGINS = frozenset({"semantic", "temporal", "co_retrieval", "explicit"})
@@ -44,6 +45,20 @@ class Edge:
     created_at: datetime
     last_reinforced_at: datetime
     reinforcement_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class EdgeSeed:
+    memory_id: UUID
+    weight: float
+    origin: EdgeOrigin
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryInsert:
+    memory: Memory
+    inserted: bool
+    edges: tuple[Edge, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,15 +244,35 @@ class Store:
         memory_id: UUID | None = None,
         created_at: datetime | None = None,
     ) -> Memory:
+        result = self.insert_memory_with_edges(
+            content,
+            metadata,
+            embedding,
+            (),
+            memory_id=memory_id,
+            created_at=created_at,
+        )
+        return result.memory
+
+    def insert_memory_with_edges(
+        self,
+        content: str,
+        metadata: Mapping[str, object],
+        embedding: Sequence[float],
+        edge_seeds: Sequence[EdgeSeed],
+        *,
+        memory_id: UUID | None = None,
+        created_at: datetime | None = None,
+    ) -> MemoryInsert:
+        """Insert one memory and its bounded initial edges atomically."""
         self._require_open()
         normalized_content = _normalize_content(content)
         content_hash = hashlib.sha256(normalized_content.encode("utf-8")).hexdigest()
         metadata_text = _prepare_metadata(metadata)
         vector = _prepare_embedding(embedding)
+        seeds = _prepare_edge_seeds(edge_seeds)
         timestamp = _require_utc(created_at or _utc_now(), "created_at")
         identifier = memory_id or uuid4()
-        row: sqlite3.Row
-        inserted = False
         with self._connection:
             self._ensure_embedding_dimension(vector.size)
             existing = self._connection.execute(
@@ -245,7 +280,8 @@ class Store:
                 (content_hash,),
             ).fetchone()
             if existing is not None:
-                return _memory_from_row(existing)
+                return MemoryInsert(_memory_from_row(existing), False, ())
+            self._require_memory_ids(tuple(str(seed.memory_id) for seed in seeds))
             self._connection.execute(
                 """
                 INSERT INTO memories (
@@ -264,10 +300,13 @@ class Store:
                 ),
             )
             row = self._required_memory_row(identifier)
-            inserted = True
-        if inserted:
-            self._append_vector_cache(identifier, vector)
-        return _memory_from_row(row)
+            edge_rows = tuple(
+                self._insert_edge_row(identifier, seed, timestamp)
+                for seed in seeds
+            )
+        self._append_vector_cache(identifier, vector)
+        edges = tuple(_edge_from_row(edge_row) for edge_row in edge_rows)
+        return MemoryInsert(_memory_from_row(row), True, edges)
 
     def get_memory(self, memory_id: UUID) -> Memory:
         self._require_open()
@@ -381,26 +420,38 @@ class Store:
         timestamp = _require_utc(created_at or _utc_now(), "created_at")
         with self._connection:
             self._require_memory_ids((str(a), str(b)))
-            self._connection.execute(
-                """
-                INSERT INTO edges (
-                    id, a, b, weight, origin, created_at,
-                    last_reinforced_at, reinforcement_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-                ON CONFLICT(id) DO NOTHING
-                """,
-                (
-                    edge_id,
-                    str(a),
-                    str(b),
-                    stored_weight,
-                    stored_origin,
-                    timestamp.isoformat(),
-                    timestamp.isoformat(),
-                ),
-            )
+            seed = EdgeSeed(b, stored_weight, stored_origin)
+            self._insert_edge_row(a, seed, timestamp)
             row = self._required_edge_row(edge_id)
         return _edge_from_row(row)
+
+    def _insert_edge_row(
+        self,
+        memory_id: UUID,
+        seed: EdgeSeed,
+        timestamp: datetime,
+    ) -> sqlite3.Row:
+        a, b = _canonical_pair(memory_id, seed.memory_id)
+        edge_id = _edge_id(a, b)
+        self._connection.execute(
+            """
+            INSERT INTO edges (
+                id, a, b, weight, origin, created_at,
+                last_reinforced_at, reinforcement_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+            ON CONFLICT(id) DO NOTHING
+            """,
+            (
+                edge_id,
+                str(a),
+                str(b),
+                seed.weight,
+                seed.origin,
+                timestamp.isoformat(),
+                timestamp.isoformat(),
+            ),
+        )
+        return self._required_edge_row(edge_id)
 
     def get_edge(self, edge_id: str) -> Edge:
         self._require_open()
@@ -733,6 +784,21 @@ def _prepare_metadata(metadata: Mapping[str, object]) -> str:
     if not all(isinstance(key, str) for key in metadata):
         raise InvalidArgumentError("metadata keys must be strings")
     return _encode_json(dict(metadata), "metadata")
+
+
+def _prepare_edge_seeds(edge_seeds: Sequence[EdgeSeed]) -> tuple[EdgeSeed, ...]:
+    seeds = tuple(edge_seeds)
+    if len(seeds) > _MEMORY_EDGE_LIMIT:
+        raise InvalidArgumentError(f"a memory accepts at most {_MEMORY_EDGE_LIMIT} initial edges")
+    if not all(isinstance(seed, EdgeSeed) for seed in seeds):
+        raise InvalidArgumentError("edge seeds must be EdgeSeed values")
+    identifiers = tuple(seed.memory_id for seed in seeds)
+    if len(set(identifiers)) != len(identifiers):
+        raise InvalidArgumentError("edge seeds must contain unique memory IDs")
+    return tuple(
+        EdgeSeed(seed.memory_id, _unit_float(seed.weight, "weight"), _edge_origin(seed.origin))
+        for seed in seeds
+    )
 
 
 def _prepare_embedding(embedding: Sequence[float]) -> FloatVector:

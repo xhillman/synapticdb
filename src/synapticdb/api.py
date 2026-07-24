@@ -17,6 +17,12 @@ from synapticdb.activation import (
 )
 from synapticdb.confidence import ConfidenceCache, GraphMetrics
 from synapticdb.embeddings import Embedder, EmbeddingFunction
+from synapticdb.learning import (
+    ParameterValue,
+    default_parameters,
+    semantic_seed_config,
+    semantic_seed_ids,
+)
 from synapticdb.models import InvalidArgumentError, Memory, Recalled, RecallResult, Stats
 from synapticdb.retrieval import (
     BlendedHit,
@@ -24,7 +30,7 @@ from synapticdb.retrieval import (
     min_max_normalize,
     reciprocal_rank_fusion,
 )
-from synapticdb.store import CANDIDATE_LIMIT, GraphSummary, Store
+from synapticdb.store import CANDIDATE_LIMIT, EdgeSeed, GraphSummary, Store
 
 _MAX_FILTER_KEYS = 64
 _MAX_TEXT_CHARS = 1_000_000
@@ -41,6 +47,7 @@ class Synaptic:
     ) -> None:
         self._store = Store(db_path)
         self._confidence = ConfidenceCache()
+        self._params: dict[str, ParameterValue] = default_parameters()
         self._closed = False
         try:
             self._embedder = Embedder(
@@ -61,9 +68,15 @@ class Synaptic:
         text = _bounded_text(content, "content")
         stored_metadata = _metadata(metadata)
         embedding = self._embedder.embed(text)
-        memory = self._store.insert_memory(text, stored_metadata, embedding)
-        self._confidence.invalidate()
-        return memory
+        config = semantic_seed_config(self._params)
+        candidates = self._store.semantic_search(embedding, limit=config.max_links)
+        candidate_scores = tuple((hit.memory_id, hit.score) for hit in candidates)
+        linked_ids = semantic_seed_ids(candidate_scores, config)
+        seeds = tuple(EdgeSeed(memory_id, config.initial_weight, "semantic") for memory_id in linked_ids)
+        result = self._store.insert_memory_with_edges(text, stored_metadata, embedding, seeds)
+        if result.inserted:
+            self._confidence.invalidate()
+        return result.memory
 
     def recall(
         self,

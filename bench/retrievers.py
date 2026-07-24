@@ -12,6 +12,7 @@ from uuid import UUID
 
 from synapticdb import Synaptic
 from synapticdb.embeddings import EmbeddingFunction
+from synapticdb.learning import semantic_seed_config
 
 from .contracts import MAX_FIXTURE_DIMENSIONS, MAX_MEMORY_COUNT, MAX_RECORD_CHARS, MAX_TOP_K
 from .dataset import MemoryRecord
@@ -85,6 +86,9 @@ class FixtureRetriever:
 class SynapticConfig:
     embedding: str
     activation_blend_weight: float = 0.45
+    semantic_seed_threshold: float = 0.6
+    semantic_seed_max_links: int = 3
+    semantic_seed_weight: float = 0.25
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -100,11 +104,20 @@ class SynapticRetriever:
         embedding_fn: EmbeddingFunction | None = None,
         *,
         embedding_name: str = "default",
+        semantic_seed: tuple[float, int, float] | None = None,
     ) -> None:
         if not embedding_name:
             raise ValueError("embedding_name must be non-empty")
-        self.config = SynapticConfig(embedding=embedding_name)
         self._memory = Synaptic(":memory:", embedding_fn=embedding_fn)
+        if semantic_seed is not None:
+            self._memory._params["semantic_seed"] = semantic_seed
+        semantic = semantic_seed_config(self._memory._params)
+        self.config = SynapticConfig(
+            embedding=embedding_name,
+            semantic_seed_threshold=semantic.threshold,
+            semantic_seed_max_links=semantic.max_links,
+            semantic_seed_weight=semantic.initial_weight,
+        )
         self._benchmark_ids: dict[UUID, str] = {}
         self._ingested = False
 
