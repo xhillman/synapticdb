@@ -54,6 +54,36 @@ a time, prefer values with a mechanical reason to help, and treat a config that
 scores well without an explanation as a finding to investigate rather than a
 default to adopt.
 
+## Rank quality, path coverage, and score calibration
+
+Every run reports three measurements beyond recall@10, because a gate that only
+rewards surfacing more cannot evaluate a change that surfaces more.
+
+| measurement | what it catches | gated? |
+|---|---|---|
+| MRR | rank movement recall@10 rounds away | yes, ratcheted |
+| chain coverage | how much of the annotated reasoning path came back | **no** |
+| score separation | confidence on questions with no answer | yes, must be positive |
+
+`--compare-to <record dir>` supplies the MRR floor from a promoted record. Absent
+it, the gate is skipped rather than defaulting to zero: a gate with nothing to
+compare against should be silent, not vacuously green.
+
+**Coverage is deliberately ungated.** More of the reasoning path returned is not
+obviously better — it may be crowding out the target. Gating a metric whose
+desirable direction cannot be argued is the mistake this measurement set exists
+to prevent. It gates when the direction can be defended.
+
+**Distractors are interleaved, not appended, and this matters.** Every recall
+mutates the graph, so top scores fall monotonically with position through a run
+(0.9100 to 0.8923 measured). Appending distractors made them look calibrated
+when they were merely late. Query results here are **not independent**; any new
+per-query metric must control for position.
+
+There is no mechanical check that a distractor is genuinely unanswerable. The
+report prints each one's top score — one scoring among the answerable queries is
+the signal to rewrite it, not evidence the system did well.
+
 ## Simulated time and the directional gates
 
 The harness can replay a run against a simulated clock, which is what makes

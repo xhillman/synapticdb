@@ -38,6 +38,11 @@ class Retrieval:
     ranked_ids: tuple[str, ...]
     path_benchmark_ids: tuple[str, ...] = ()
     query_id: str | None = None
+    # Confidence per ranked ID, in the same order. Optional because a retriever
+    # that cannot supply it simply forfeits calibration scoring rather than
+    # failing. Scales need not match across retrievers: calibration only ever
+    # compares one retriever against itself.
+    scores: tuple[float, ...] = ()
 
     def __post_init__(self) -> None:
         if len(self.ranked_ids) > MAX_TOP_K or len(self.path_benchmark_ids) > MAX_MEMORY_COUNT:
@@ -46,6 +51,8 @@ class Retrieval:
             raise ValueError("retrieval IDs must be non-empty")
         if len(set(self.ranked_ids)) != len(self.ranked_ids):
             raise ValueError("ranked retrieval IDs must be unique")
+        if self.scores and len(self.scores) != len(self.ranked_ids):
+            raise ValueError("retrieval scores must align with ranked IDs")
 
 
 class Retriever(Protocol):
@@ -94,7 +101,11 @@ class FixtureRetriever:
             raise ValueError("recall requires non-empty text and a bounded top_k")
         query = _fixture_embedding(text)
         ranked = sorted(self._docs, key=lambda item: (-_dot(query, item[1]), item[0]))
-        return Retrieval(tuple(memory_id for memory_id, _ in ranked[:top_k]))
+        selected = ranked[:top_k]
+        return Retrieval(
+            tuple(memory_id for memory_id, _ in selected),
+            scores=tuple(_dot(query, vector) for _, vector in selected),
+        )
 
     def feedback(self, retrieval: Retrieval, *, positive: bool) -> None:
         if not isinstance(retrieval, Retrieval) or not isinstance(positive, bool):
@@ -190,7 +201,12 @@ class SynapticRetriever:
         except KeyError as exc:
             raise RuntimeError("Synaptic returned an unknown benchmark memory") from exc
         path_ids = self._path_benchmark_ids(result.query_id)
-        return Retrieval(ranked, path_ids, str(result.query_id))
+        return Retrieval(
+            ranked,
+            path_ids,
+            str(result.query_id),
+            scores=tuple(item.score for item in result.memories),
+        )
 
     def _path_benchmark_ids(self, query_id: UUID) -> tuple[str, ...]:
         query = self._memory._store.get_query(query_id)

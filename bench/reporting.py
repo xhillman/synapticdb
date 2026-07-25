@@ -20,6 +20,31 @@ _MEASUREMENT_CLAIMS = {
 }
 
 
+def _render_quality(report: BenchmarkReport) -> list[str]:
+    """Rank quality, path coverage, and score calibration."""
+    floor = report.mrr_floor
+    lines = [
+        "| Seed | MRR | MRR floor | Chain coverage | Score separation |",
+        "|---:|---:|---|---:|---|",
+    ]
+    for run in report.runs:
+        separation = "—" if run.score_separation is None else f"{run.score_separation:+.4f}"
+        lines.append(
+            f"| {run.seed} | {run.mrr:.4f} | {'—' if floor is None else f'{floor:.4f}'} | "
+            f"{run.mean_intermediate_coverage:.4f} | {separation} |"
+        )
+    lines.extend(
+        [
+            "",
+            "MRR must not regress against the record named by `--compare-to`; a real "
+            "answer must outscore the best guess at an unanswerable question. Chain "
+            "coverage is reported, not gated: we cannot yet argue which direction is good.",
+            "",
+        ]
+    )
+    return lines
+
+
 def _render_measurements(report: BenchmarkReport) -> list[str]:
     """Render the directional gates, each beside the claim it tests."""
     if not any(run.measurements for run in report.runs):
@@ -76,6 +101,7 @@ def render_markdown(report: BenchmarkReport) -> str:
             "",
         ]
     )
+    lines.extend(_render_quality(report))
     lines.extend(_render_measurements(report))
     if report.expected_baseline_hits is not None:
         direct, associative = report.expected_baseline_hits

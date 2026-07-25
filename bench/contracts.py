@@ -8,7 +8,12 @@ SMOKE_DIRECT_QUERY_COUNT = 5
 SMOKE_ASSOCIATIVE_QUERY_COUNT = 5
 
 MAX_MEMORY_COUNT = FULL_MEMORY_COUNT
-MAX_QUERY_COUNT = FULL_DIRECT_QUERY_COUNT + FULL_ASSOCIATIVE_QUERY_COUNT
+# Plausible questions the corpus cannot answer. Only the chained profile
+# carries them; they are what lets a promotion change fail rather than win by
+# construction on a corpus where every activated node is correct.
+FULL_DISTRACTOR_QUERY_COUNT = 12
+
+MAX_QUERY_COUNT = FULL_DIRECT_QUERY_COUNT + FULL_ASSOCIATIVE_QUERY_COUNT + FULL_DISTRACTOR_QUERY_COUNT
 MAX_SCHEDULE_COUNT = FULL_MEMORY_COUNT
 MAX_WARMUP_COUNT = 50
 MAX_SEED_COUNT = 12

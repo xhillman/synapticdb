@@ -2,6 +2,7 @@
   "counts": {
     "associative_queries": 25,
     "direct_queries": 25,
+    "distractor_queries": 0,
     "memories": 500,
     "warmup_events": 6
   },

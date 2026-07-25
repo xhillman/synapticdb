@@ -131,7 +131,11 @@ class LockedBaseline:
         fusion = _rrf(keyword, semantic, self.config.fusion_k)
         ranked = self._rerank(text, keyword, semantic, fusion)
         limit = min(top_k, self.config.final_top_k)
-        return Retrieval(tuple(node_id for node_id, _ in ranked[:limit]))
+        selected = ranked[:limit]
+        return Retrieval(
+            tuple(node_id for node_id, _ in selected),
+            scores=tuple(float(score) for _, score in selected),
+        )
 
     def feedback(
         self,

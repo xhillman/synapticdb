@@ -204,6 +204,80 @@ def test_diversity_passes_are_bounded(passes: int) -> None:
         )
 
 
+class AnsweringRetriever(ScriptedRetriever):
+    """Answers every answerable query at a fixed rank, with a fixed confidence.
+
+    `distractor_score` is what it reports for a question with no answer — the
+    knob that separates a calibrated system from an overconfident one.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        dataset: BenchmarkDataset,
+        *,
+        rank: int,
+        answer_score: float,
+        distractor_score: float,
+    ) -> None:
+        super().__init__(name, {})
+        self.answers = {q.text: q.expected_ids for q in dataset.queries if q.expected_ids}
+        self.rank = rank
+        self.answer_score = answer_score
+        self.distractor_score = distractor_score
+
+    def recall(self, text: str, *, top_k: int) -> Retrieval:
+        filler = [f"filler-{index}" for index in range(top_k)]
+        expected = self.answers.get(text)
+        if expected is None:
+            return Retrieval(tuple(filler), scores=tuple([self.distractor_score] * len(filler)))
+        ranked = [*filler[: self.rank - 1], expected[0], *filler[self.rank - 1 :]][:top_k]
+        return Retrieval(tuple(ranked), scores=tuple([self.answer_score] * len(ranked)))
+
+
+def _run(candidate: ScriptedRetriever, dataset: BenchmarkDataset, **kwargs: object) -> object:
+    return run_benchmark(
+        dataset,
+        baseline_factory=lambda: ScriptedRetriever("baseline", {}),
+        candidate_factory=lambda: candidate,
+        required_unique_wins=0,
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
+def test_reciprocal_rank_reflects_where_the_answer_landed() -> None:
+    dataset = _smoke()
+    for rank, expected in ((1, 1.0), (4, 0.25)):
+        candidate = AnsweringRetriever("c", dataset, rank=rank, answer_score=0.9, distractor_score=0.1)
+        report = _run(candidate, dataset)
+        assert report.runs[0].mrr == pytest.approx(expected)  # type: ignore[attr-defined]
+
+    # Never returning the answer scores zero, not "no data".
+    blind = ScriptedRetriever("blind", {})
+    assert _run(blind, dataset).runs[0].mrr == 0.0  # type: ignore[attr-defined]
+
+
+def test_chain_coverage_counts_the_reasoning_path_returned() -> None:
+    dataset = _smoke()
+    associative = [q for q in dataset.queries if q.label == "associative"]
+    both = {q.text: Retrieval(q.intermediate_ids[:2] + q.expected_ids) for q in associative}
+    one = {q.text: Retrieval(q.intermediate_ids[:1] + q.expected_ids) for q in associative}
+    assert _run(ScriptedRetriever("c", both), dataset).runs[0].mean_intermediate_coverage == 1.0  # type: ignore[attr-defined]
+    assert _run(ScriptedRetriever("c", one), dataset).runs[0].mean_intermediate_coverage == 0.5  # type: ignore[attr-defined]
+
+
+def test_the_mrr_ratchet_fails_a_regression() -> None:
+    dataset = _smoke()
+    strong = AnsweringRetriever("c", dataset, rank=1, answer_score=0.9, distractor_score=0.1)
+    weak = AnsweringRetriever("c", dataset, rank=5, answer_score=0.9, distractor_score=0.1)
+
+    assert _run(strong, dataset, mrr_floor=1.0).passed  # type: ignore[attr-defined]
+    # 0.2 against a floor of 1.0: the ratchet must refuse it.
+    assert not _run(weak, dataset, mrr_floor=1.0).passed  # type: ignore[attr-defined]
+    # Absent a floor the gate is silent, not vacuously green.
+    assert _run(weak, dataset).runs[0].mrr == pytest.approx(0.2)  # type: ignore[attr-defined]
+
+
 def test_measurement_rejects_an_unknown_name() -> None:
     with pytest.raises(ValueError, match="unknown measurement"):
         run_benchmark(

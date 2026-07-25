@@ -6,12 +6,13 @@ import platform
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from contextlib import ExitStack
 from dataclasses import asdict, dataclass, field
 from datetime import timedelta
 from importlib import metadata
 from pathlib import Path
+from statistics import median
 from typing import Any
 
 from .contracts import (
@@ -40,6 +41,16 @@ class QueryScore:
     candidate_rank: int | None
     path_present: bool
     unique_win: bool
+    # Rank quality, which recall@10 cannot express: rank 1 and rank 10 are the
+    # same hit but not the same answer. 0.0 when the target never appears.
+    reciprocal_rank: float = 0.0
+    # Share of the query's annotated reasoning path that came back. The dataset
+    # has always carried these IDs; until now they were only a boolean flag.
+    intermediate_coverage: float = 0.0
+    # Top score the candidate returned. Meaningless for ranking, but it is what
+    # an agent would threshold on, and the only way to catch a system that is
+    # confident about a question with no answer.
+    candidate_top_score: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +108,13 @@ class SeedResult:
     queries: tuple[QueryScore, ...]
     # Empty unless a measurement was requested, so existing records still parse.
     measurements: tuple[Measurement, ...] = ()
+    # Over answerable queries only. Distractors have no rank to reciprocate.
+    mrr: float = 0.0
+    mean_intermediate_coverage: float = 0.0
+    # median(correct-answer score) - median(distractor top score). Positive
+    # means the system scores a real answer above anything it finds for a
+    # question that has none. None when the profile carries no distractors.
+    score_separation: float | None = None
 
 
 @dataclass(frozen=True)
@@ -118,6 +136,9 @@ class BenchmarkReport:
     # The simulated spans this run used. All zero means the wall clock, so a
     # record can never be misread as having aged a graph it did not.
     timeline: dict[str, float] = field(default_factory=dict)
+    # The MRR the run had to match or beat, and the record it came from.
+    # None when nothing was supplied: an absent gate, not a passing one.
+    mrr_floor: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -145,6 +166,7 @@ def run_benchmark(
     timeline: Timeline = WALL_CLOCK,
     measures: frozenset[str] = frozenset(),
     diversity_passes: int = 2,
+    mrr_floor: float | None = None,
 ) -> BenchmarkReport:
     """Run ingest → warm-up → holdout evaluation for each bounded seed."""
     _validate_run_inputs(dataset, seeds, top_k, required_unique_wins, direct_tolerance, expected_baseline_hits)
@@ -166,6 +188,7 @@ def run_benchmark(
             timeline,
             measures,
             diversity_passes,
+            mrr_floor,
         )
         for seed in seeds
     )
@@ -187,6 +210,7 @@ def run_benchmark(
         candidate_config=first.candidate_config,
         environment=_environment(),
         timeline=asdict(timeline),
+        mrr_floor=mrr_floor,
     )
 
 
@@ -202,6 +226,7 @@ def _execute_seed(
     timeline: Timeline = WALL_CLOCK,
     measures: frozenset[str] = frozenset(),
     diversity_passes: int = 2,
+    mrr_floor: float | None = None,
 ) -> _Execution:
     started = time.perf_counter()
     with ExitStack() as resources:
@@ -247,6 +272,7 @@ def _execute_seed(
             expected_baseline_hits=expected_baseline_hits,
             elapsed=time.perf_counter() - started,
             measurements=measurements,
+            mrr_floor=mrr_floor,
         )
         return _Execution(
             result,
@@ -437,6 +463,7 @@ def _score(
     expected_baseline_hits: tuple[int, int] | None,
     elapsed: float,
     measurements: tuple[Measurement, ...] = (),
+    mrr_floor: float | None = None,
 ) -> SeedResult:
     expected_count = len(dataset.queries)
     if len(baseline) != expected_count or len(candidate) != expected_count:
@@ -450,6 +477,10 @@ def _score(
     base_associative = sum(score.baseline_hit for score in scores if score.label == "associative")
     candidate_associative = sum(score.candidate_hit for score in scores if score.label == "associative")
     wins = sum(score.unique_win for score in scores)
+    answerable = tuple(score for score in scores if score.label != "distractor")
+    mrr = _mean(score.reciprocal_rank for score in answerable)
+    coverage = _mean(score.intermediate_coverage for score in answerable if score.label == "associative")
+    separation = _score_separation(scores)
     base_rate = base_direct / dataset.direct_total
     candidate_rate = candidate_direct / dataset.direct_total
     parity = candidate_rate + direct_tolerance >= base_rate
@@ -464,16 +495,52 @@ def _score(
         direct_parity=parity,
         baseline_reproduced=reproduced,
         # A directional gate is a gate: a violated relationship fails the run.
+        # Pre-registered before the first run: MRR must not regress against the
+        # reference record, and a real answer must outscore the best guess at an
+        # unanswerable question. Coverage is reported, never gated — we cannot
+        # yet argue which direction is good.
         passed=(
             reproduced
             and parity
             and wins >= required_unique_wins
             and all(measurement.passed for measurement in measurements)
+            and (mrr_floor is None or mrr >= mrr_floor)
+            and (separation is None or separation > 0.0)
         ),
         elapsed_seconds=elapsed,
         queries=scores,
         measurements=measurements,
+        mrr=mrr,
+        mean_intermediate_coverage=coverage,
+        score_separation=separation,
     )
+
+
+def _mean(values: Iterable[float]) -> float:
+    collected = tuple(values)
+    return sum(collected) / len(collected) if collected else 0.0
+
+
+def _score_separation(scores: Sequence[QueryScore]) -> float | None:
+    """How far a real answer outscores the best guess at an unanswerable one.
+
+    Positive means the score an agent would threshold on carries information.
+    None when the profile has no distractors, or when the retriever supplies no
+    scores — an absent measurement, not a passing one.
+    """
+    answered = [
+        score.candidate_top_score
+        for score in scores
+        if score.label != "distractor" and score.candidate_hit and score.candidate_top_score is not None
+    ]
+    distractors = [
+        score.candidate_top_score
+        for score in scores
+        if score.label == "distractor" and score.candidate_top_score is not None
+    ]
+    if not answered or not distractors:
+        return None
+    return median(answered) - median(distractors)
 
 
 def _score_query(query: QueryRecord, baseline: Retrieval, candidate: Retrieval, top_k: int) -> QueryScore:
@@ -484,6 +551,10 @@ def _score_query(query: QueryRecord, baseline: Retrieval, candidate: Retrieval, 
     unique = bool(
         query.label == "associative" and candidate_rank is not None and baseline_rank is None and path_present
     )
+    returned = set(candidate.ranked_ids[:top_k])
+    coverage = (
+        len(set(query.intermediate_ids) & returned) / len(query.intermediate_ids) if query.intermediate_ids else 0.0
+    )
     return QueryScore(
         query_id=query.query_id,
         label=query.label,
@@ -493,6 +564,9 @@ def _score_query(query: QueryRecord, baseline: Retrieval, candidate: Retrieval, 
         candidate_rank=candidate_rank,
         path_present=path_present,
         unique_win=unique,
+        reciprocal_rank=0.0 if candidate_rank is None else 1.0 / candidate_rank,
+        intermediate_coverage=coverage,
+        candidate_top_score=candidate.scores[0] if candidate.scores else None,
     )
 
 

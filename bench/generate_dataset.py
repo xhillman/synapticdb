@@ -542,6 +542,46 @@ def _build_associative_rows() -> tuple[list[dict[str, Any]], list[dict[str, Any]
     return memories, queries, chain_warmups, sections
 
 
+# Questions a reader would believe this corpus could answer, about facts it
+# never records: budgets, headcount, contracts, hours, prices. Each names a real
+# organization so keyword search has something to latch onto — the point is not
+# that retrieval finds nothing, but that what it finds should score low.
+#
+# There is no mechanical check that a distractor is truly unanswerable. The
+# report prints each one's top score; one scoring near the answerable queries is
+# the signal to rewrite it, not evidence the system did well.
+DISTRACTOR_SPECS = (
+    "What is the annual maintenance budget for the Alder depot refrigeration units?",
+    "How many staff does the Willow Clinic employ in its scheduling department?",
+    "Which vendor holds the service contract for the Cedar Museum audio guides?",
+    "What are the Harborlight Hotel check-in and check-out times?",
+    "How much did Morrow Orchard pay for its solar timing boards?",
+    "Which insurance carrier covers the Silverwake Ferry dock equipment?",
+    "Which shift pattern do Lumen Depot pickers work in zone C?",
+    "What is the seating capacity of the Lantern Theater?",
+    "Who approves purchase orders for the Clover retry queue service?",
+    "What is the replacement cost of the Boreal weather adapter?",
+    "Which supplier provides clay to Orchid Ceramics?",
+    "What is the warranty period on the Glassfin Aquarium filtration pumps?",
+)
+
+
+def _build_distractor_rows() -> list[dict[str, Any]]:
+    """Queries with no valid answer, so over-promotion can be punished."""
+    start = FULL_DIRECT_QUERY_COUNT + FULL_ASSOCIATIVE_QUERY_COUNT
+    return [
+        {
+            "query_id": f"Q-{start + index:03d}",
+            "label": "distractor",
+            "text": text,
+            "expected_relevant_node_ids": [],
+            "required_intermediate_node_ids": [],
+            "reviewer_note": "Plausible for this corpus, answered nowhere in it.",
+        }
+        for index, text in enumerate(DISTRACTOR_SPECS, 1)
+    ]
+
+
 def _build_direct_rows(start: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     memories: list[dict[str, Any]] = []
     queries: list[dict[str, Any]] = []
@@ -651,7 +691,29 @@ def build_chained() -> tuple[
     memories, queries, schedule, warmup, chained, sections = _build_profiles()
     # Keep one negative event so negative feedback stays exercised.
     negative = [row for row in warmup if not row["positive"]]
-    return memories, queries, schedule, chained + negative, sections
+    return memories, _interleave_distractors(queries), schedule, chained + negative, sections
+
+
+def _interleave_distractors(queries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Spread distractors through the run instead of appending them.
+
+    Every recall mutates the graph, so a query's position changes the state it
+    sees: measured top scores fall monotonically from 0.9100 to 0.8923 across a
+    run purely with position. Appending distractors made them look calibrated
+    when they were only late. Interleaving puts both kinds at every position.
+    """
+    distractors = _build_distractor_rows()
+    if not distractors:
+        return queries
+    stride = max(1, len(queries) // len(distractors))
+    merged: list[dict[str, Any]] = []
+    pending = list(distractors)
+    for index, query in enumerate(queries, 1):
+        merged.append(query)
+        if pending and index % stride == 0:
+            merged.append(pending.pop(0))
+    merged.extend(pending)
+    return merged
 
 
 def _build_profiles() -> tuple[
@@ -711,6 +773,12 @@ def _validate_generated(
         for query in queries
     ):
         raise RuntimeError("generated query annotations reference unknown memories")
+    # A distractor with an answer is not a distractor; an answerable query
+    # without one cannot be scored.
+    for query in queries:
+        annotated = bool(query["expected_relevant_node_ids"])
+        if (query["label"] == "distractor") == annotated:
+            raise RuntimeError(f"query {query['query_id']} contradicts its label")
     holdout = {query["text"].casefold() for query in queries}
     if not warmup or any(row["text"].casefold() in holdout for row in warmup):
         raise RuntimeError("generated warmup must be non-empty and disjoint")
@@ -784,6 +852,7 @@ def _write_profile(
             "memories": len(memories),
             "direct_queries": sum(query["label"] == "direct" for query in queries),
             "associative_queries": sum(query["label"] == "associative" for query in queries),
+            "distractor_queries": sum(query["label"] == "distractor" for query in queries),
             "warmup_events": len(warmup),
         },
         "sha256": {name: hashlib.sha256(payload.encode()).hexdigest() for name, payload in sorted(payloads.items())},
@@ -843,10 +912,11 @@ def _select_smoke_queries(queries: list[dict[str, Any]]) -> list[dict[str, Any]]
 def main() -> None:
     memories, queries, schedule, warmup, chains = build_full()
     _write_profile(ROOT / "full", memories, queries, schedule, warmup, chains)
-    chained_warmup = build_chained()[3]
-    # Same memories, schedule, and holdout as `full`; only the warm-up differs,
-    # so the two profiles stay directly comparable.
-    _write_profile(ROOT / "chained", memories, queries, schedule, chained_warmup, chains)
+    _, chained_queries, _, chained_warmup, _ = build_chained()
+    # Same memories, schedule, and holdout as `full`, plus distractors and a
+    # chain-traversing warm-up. The corpus is identical, so the two profiles
+    # stay directly comparable on the queries they share.
+    _write_profile(ROOT / "chained", memories, chained_queries, schedule, chained_warmup, chains)
     smoke_memories = _select_smoke_memories(memories)
     smoke_queries = _select_smoke_queries(queries)
     smoke_schedule = _build_schedule(smoke_memories)

@@ -110,6 +110,10 @@ def load_dataset(data_dir: str | Path, *, expected_counts: tuple[int, int, int] 
     )
     if counts != declared or len(warmup) != manifest_counts.get("warmup_events"):
         raise DatasetError(f"dataset counts do not match manifest: {counts}, warmup={len(warmup)}")
+    # Distractors default to zero so profiles predating them still load.
+    distractors = sum(q.label == "distractor" for q in queries)
+    if distractors != manifest_counts.get("distractor_queries", 0):
+        raise DatasetError(f"dataset declares a different distractor count: {distractors}")
     if expected_counts is not None and counts != expected_counts:
         raise DatasetError(f"dataset counts {counts} do not match expected {expected_counts}")
     return BenchmarkDataset(memories, queries, warmup, _fingerprint(root, warmup_path.exists()))
@@ -171,7 +175,7 @@ def _memory(row: dict[str, Any], index: int, schedule: dict[str, int]) -> Memory
 
 def _query(row: dict[str, Any], index: int) -> QueryRecord:
     label = _text(row, "label", "query", index)
-    if label not in {"direct", "associative"}:
+    if label not in {"direct", "associative", "distractor"}:
         raise DatasetError(f"query row {index} has invalid label {label!r}")
     return QueryRecord(
         query_id=_text(row, "query_id", "query", index),
@@ -224,22 +228,36 @@ def _validate(
     if len(query_ids) != len(set(query_ids)):
         raise DatasetError("duplicate query_id")
     labels = {query.label for query in queries}
-    if labels != {"direct", "associative"}:
+    if not {"direct", "associative"} <= labels or not labels <= {"direct", "associative", "distractor"}:
         raise DatasetError("dataset must include direct and associative queries")
     known = set(memory_ids)
     if any(memory.ingest_offset_seconds < 0 for memory in memories):
         raise DatasetError("ingestion schedule does not match every memory")
+    _validate_query_annotations(queries, known)
+    holdout_texts = {query.text.casefold() for query in queries}
+    if any(event.text.casefold() in holdout_texts for event in warmup):
+        raise DatasetError("warmup and holdout query texts must be disjoint")
+    _validate_no_leakage(queries, warmup, known)
+
+
+def _validate_query_annotations(queries: tuple[QueryRecord, ...], known: set[str]) -> None:
+    """Every query's annotations must match what its label promises.
+
+    A distractor exists to have no answer, so carrying one would make it
+    scoreable and destroy its purpose. Everything else must have an answer, or
+    a change could never be scored against it.
+    """
     for query in queries:
+        if query.label == "distractor":
+            if query.expected_ids or query.intermediate_ids:
+                raise DatasetError(f"distractor {query.query_id} must not carry annotations")
+            continue
         if not query.expected_ids or not set(query.expected_ids) <= known:
             raise DatasetError(f"query {query.query_id} has missing or unknown expected IDs")
         if query.label == "associative" and not query.intermediate_ids:
             raise DatasetError(f"associative query {query.query_id} has no intermediate IDs")
         if not set(query.intermediate_ids) <= known:
             raise DatasetError(f"query {query.query_id} has unknown intermediate IDs")
-    holdout_texts = {query.text.casefold() for query in queries}
-    if any(event.text.casefold() in holdout_texts for event in warmup):
-        raise DatasetError("warmup and holdout query texts must be disjoint")
-    _validate_no_leakage(queries, warmup, known)
 
 
 def _validate_no_leakage(

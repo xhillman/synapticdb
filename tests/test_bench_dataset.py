@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from bench.dataset import DatasetError, WarmupEvent, load_dataset
+from bench.dataset import DatasetError, QueryRecord, WarmupEvent, load_dataset
 from bench.generate_dataset import CHAIN_SPECS, build_chained, build_full
 from bench.generate_dataset import _validate_no_leakage as generator_leakage_guard
 
@@ -99,11 +99,16 @@ def test_every_chain_carries_a_distinct_warm_up_question() -> None:
     assert len({text.casefold() for text in warmups}) == len(warmups)
 
 
-def test_chained_profile_shares_the_corpus_and_differs_only_in_warm_up() -> None:
+def test_chained_profile_shares_the_corpus_and_adds_warm_up_and_distractors() -> None:
     full = load_dataset(ROOT / "bench/data/full", expected_counts=(500, 25, 25))
     chained = load_dataset(ROOT / "bench/data/chained", expected_counts=(500, 25, 25))
     assert full.memories == chained.memories
-    assert full.queries == chained.queries
+    # The answerable queries are identical, so the two profiles stay comparable
+    # on everything they share; chained only adds unanswerable ones.
+    answerable = tuple(query for query in chained.queries if query.label != "distractor")
+    assert full.queries == answerable
+    assert sum(query.label == "distractor" for query in chained.queries) == 12
+    assert all(not query.expected_ids for query in chained.queries if query.label == "distractor")
     assert full.warmup != chained.warmup
     # A different fingerprint is correct and required: it is a different
     # dataset, so its records can never be mistaken for full's.
@@ -143,6 +148,44 @@ def test_loader_refuses_a_warm_up_that_surfaces_the_target(tmp_path: Path) -> No
 
     with pytest.raises(DatasetError, match="surface the holdout target"):
         _validate(chained.memories, chained.queries, (leaking,))
+
+
+def test_distractors_are_plausible_and_unanswerable() -> None:
+    chained = load_dataset(ROOT / "bench/data/chained", expected_counts=(500, 25, 25))
+    distractors = [query for query in chained.queries if query.label == "distractor"]
+    assert len(distractors) == 12
+    # Each names a real organization, so keyword search has something to latch
+    # onto: the test is whether the score stays low, not whether nothing matches.
+    corpus = " ".join(memory.content for memory in chained.memories).casefold()
+    for query in distractors:
+        assert not query.expected_ids and not query.intermediate_ids
+        proper_nouns = [word for word in query.text.split() if word[:1].isupper() and len(word) > 3]
+        assert any(noun.casefold().strip("?,.") in corpus for noun in proper_nouns), query.text
+
+
+def test_a_distractor_carrying_an_answer_is_rejected() -> None:
+    chained = load_dataset(ROOT / "bench/data/chained", expected_counts=(500, 25, 25))
+    from bench.dataset import _validate
+
+    leaking = QueryRecord(
+        query_id="Q-099",
+        label="distractor",
+        text="a question that secretly has an answer",
+        expected_ids=(chained.memories[0].benchmark_id,),
+        intermediate_ids=(),
+    )
+    with pytest.raises(DatasetError, match="must not carry annotations"):
+        _validate(chained.memories, (*chained.queries, leaking), ())
+
+    unanswerable = QueryRecord(
+        query_id="Q-100",
+        label="associative",
+        text="an answerable query with no answer",
+        expected_ids=(),
+        intermediate_ids=(),
+    )
+    with pytest.raises(DatasetError, match="missing or unknown expected IDs"):
+        _validate(chained.memories, (*chained.queries, unanswerable), ())
 
 
 def test_build_chained_keeps_a_negative_feedback_event() -> None:

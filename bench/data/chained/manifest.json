@@ -2,6 +2,7 @@
   "counts": {
     "associative_queries": 25,
     "direct_queries": 25,
+    "distractor_queries": 12,
     "memories": 500,
     "warmup_events": 26
   },
@@ -13,7 +14,7 @@
   "sha256": {
     "chains.md": "40bb86eda0f8813919e1c7b300970fad6df308e358844807f489a8aa220281a7",
     "memories.jsonl": "d89553d18ceab6814d22ba4133eaf08cb2e28bc552b8930b70ebfd22d86ced6d",
-    "queries.jsonl": "771b75d1a09974b73728027d02509271b0fedd8b63de6a8f128e111004635fc6",
+    "queries.jsonl": "1b80916a52fbc9364c341ecad49026e401fd74d7ffcfa3cd77f7f72d09ff1bc7",
     "schedule.jsonl": "c8d7e7f8f0e3ed2d2acb287b662165e2b64fbd7789f299286f9991bdcd6559bb",
     "warmup.jsonl": "32b36df502a85b8275942b9f00d1327c25ed396d4a597214b0595253605bc227"
   }

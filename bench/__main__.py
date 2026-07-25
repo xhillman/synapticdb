@@ -61,6 +61,12 @@ def parse_args() -> argparse.Namespace:
         help="Run a directional gate; repeatable",
     )
     parser.add_argument(
+        "--compare-to",
+        default=None,
+        metavar="RECORD_DIR",
+        help="Promoted record to ratchet MRR against; the gate is skipped when absent",
+    )
+    parser.add_argument(
         "--diversity-passes",
         type=int,
         default=2,
@@ -90,6 +96,25 @@ def _parse_overrides(entries: Sequence[str]) -> dict[str, ParameterValue]:
         # JSON has no tuples, so a group like temporal_link arrives as a list.
         overrides[key] = tuple(value) if isinstance(value, list) else value
     return overrides
+
+
+def _mrr_floor(record_dir: str | None) -> float | None:
+    """Read the MRR a promoted record achieved, to ratchet against.
+
+    Returns None when no record is named, which skips the gate rather than
+    defaulting to zero: a gate with nothing to compare against should be
+    silent, not vacuously green. Also None for records predating the metric.
+    """
+    if record_dir is None:
+        return None
+    report = json.loads((Path(record_dir) / "report.json").read_text(encoding="utf-8"))
+    runs = report.get("runs") or []
+    floors = [float(run["mrr"]) for run in runs if run.get("mrr") is not None]
+    if not floors:
+        return None
+    # The weakest seed sets the floor: a ratchet should not be satisfied by one
+    # good seed hiding a regression in another.
+    return min(floors)
 
 
 def _parse_seeds(value: str) -> tuple[int, ...]:
@@ -160,6 +185,7 @@ def main() -> int:
         timeline=Timeline(args.warmup_span_days, args.query_offset_days, args.decay_probe_days),
         measures=frozenset(args.measure),
         diversity_passes=args.diversity_passes,
+        mrr_floor=_mrr_floor(args.compare_to),
     )
     print(render_markdown(report))
     if not args.no_write:
