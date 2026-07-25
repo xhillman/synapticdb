@@ -104,17 +104,14 @@ def blend_rankings(
     if maturity == 0.0 or weight == 0.0:
         return tuple(BlendedHit(memory_id, score, "search") for memory_id, score in normalized_fusion.items())
     seeds = frozenset(seed_ids)
-    discovered = {
-        memory_id: score for memory_id, score in activation_scores.items() if memory_id not in seeds
-    }
+    discovered = {memory_id: score for memory_id, score in activation_scores.items() if memory_id not in seeds}
     normalized_activation = min_max_normalize(discovered)
     alpha = weight * maturity
     ordered_ids = tuple(dict.fromkeys((*normalized_fusion, *normalized_activation)))
     blended = [
         BlendedHit(
             memory_id,
-            (1.0 - alpha) * normalized_fusion.get(memory_id, 0.0)
-            + alpha * normalized_activation.get(memory_id, 0.0),
+            (1.0 - alpha) * normalized_fusion.get(memory_id, 0.0) + alpha * normalized_activation.get(memory_id, 0.0),
             _recall_source(memory_id, normalized_fusion, normalized_activation),
         )
         for memory_id in ordered_ids
@@ -136,6 +133,3 @@ def _recall_source(
     if in_activation:
         return "association"
     return "search"
-
-
-

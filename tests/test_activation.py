@@ -73,19 +73,14 @@ def test_activation_loop_guard_propagates_each_node_once() -> None:
     result = spread_activation(((first, 1.0),), graph.lookup)
 
     assert graph.lookups == {first: 1, second: 1}
-    assert {hit.memory_id: hit.energy for hit in result.hits} == pytest.approx(
-        {first: 1.0, second: 0.8}
-    )
+    assert {hit.memory_id: hit.energy for hit in result.hits} == pytest.approx({first: 1.0, second: 0.8})
     assert result.path_edge_ids == ("edge",)
 
 
 def test_activation_stops_after_five_steps() -> None:
     nodes = tuple(uuid4() for _ in range(7))
     graph = Graph(
-        {
-            source: (Neighbor(target, f"edge-{index}", 1.0),)
-            for index, (source, target) in enumerate(pairwise(nodes))
-        }
+        {source: (Neighbor(target, f"edge-{index}", 1.0),) for index, (source, target) in enumerate(pairwise(nodes))}
     )
 
     result = spread_activation(((nodes[0], 1.0),), graph.lookup)

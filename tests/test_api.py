@@ -1,3 +1,4 @@
+import inspect
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from typing import cast
@@ -6,7 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from synapticdb import InvalidArgumentError, NotFoundError, Synaptic
-from synapticdb.learning import LINKED_RESULT_COUNT, SEMANTIC_SEED_CALIBRATION
+from synapticdb.learning import LINKED_RESULT_COUNT, SEMANTIC_SEED_CALIBRATION, default_parameters
 from synapticdb.retrieval import min_max_normalize, reciprocal_rank_fusion
 
 
@@ -631,3 +632,24 @@ def test_recall_rejects_invalid_top_k(top_k: object) -> None:
         pytest.raises(InvalidArgumentError, match="top_k"),
     ):
         memory.recall("alpha", top_k=cast(int, top_k))
+
+
+def test_constructor_exposes_no_tuning_parameters() -> None:
+    """PRD section 9: the 17 parameter groups stay private in v0.
+
+    A knob added to the constructor is a public commitment that v0 does not
+    intend to make. This fails the moment one leaks out, rather than at the
+    point someone depends on it.
+    """
+    signature = inspect.signature(Synaptic.__init__)
+    assert list(signature.parameters) == ["self", "db_path", "embedding_fn"]
+    tunable = set(default_parameters()) - {"top_k"}
+    assert tunable.isdisjoint(signature.parameters)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["remember", "recall", "feedback", "connect", "forget", "stats", "close", "__enter__", "__exit__"],
+)
+def test_public_methods_are_documented(name: str) -> None:
+    assert inspect.getdoc(getattr(Synaptic, name))

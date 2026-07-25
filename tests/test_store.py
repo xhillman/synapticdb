@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from synapticdb import EmbeddingError, InvalidArgumentError, NotFoundError
-from synapticdb.store import EdgeSeed, PairSeed, Store
+from synapticdb.store import _DECAYED_WEIGHT_SQL, _NATIVE_DECAYED_WEIGHT_SQL, EdgeSeed, PairSeed, Store
 
 
 @pytest.fixture
@@ -397,6 +397,107 @@ def test_graph_summary_average_weight_falls_as_edges_age(store: Store) -> None:
     aged = store.graph_summary(now=created_at + timedelta(days=30))
     assert fresh.average_edge_weight == pytest.approx(0.6)
     assert aged.average_edge_weight == pytest.approx(0.3)
+
+
+def test_native_and_callback_decay_agree(store: Store) -> None:
+    """Pin the two spellings of the PRD section 6.4 decay law together.
+
+    graph_summary runs the native expression where it is available and the
+    registered callback where it is not. Two spellings of one law can drift, so
+    this compares them directly across the operating range rather than trusting
+    that they were written from the same formula.
+    """
+    created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    previous = remember(store, "anchor")
+    for index, weight in enumerate((0.02, 0.25, 0.5, 0.75, 1.0)):
+        current = remember(store, f"memory {index}")
+        store.insert_edge(previous, current, weight, "explicit", created_at=created_at)
+        previous = current
+
+    for elapsed_days in (-10.0, 0.0, 0.5, 7.0, 30.0, 365.0):
+        read_time = created_at + timedelta(days=elapsed_days)
+        for half_life in (1.0, 30.0, 900.0):
+            native = store._connection.execute(
+                f"SELECT COALESCE(AVG({_NATIVE_DECAYED_WEIGHT_SQL}), 0.0) FROM edges",
+                (read_time.isoformat(), half_life),
+            ).fetchone()[0]
+            callback = store._connection.execute(
+                f"SELECT COALESCE(AVG({_DECAYED_WEIGHT_SQL}), 0.0) FROM edges",
+                (read_time.isoformat(), half_life),
+            ).fetchone()[0]
+            assert native == pytest.approx(callback, abs=1e-12), (
+                f"decay spellings disagree at {elapsed_days} days, half-life {half_life}"
+            )
+
+
+def test_graph_summary_falls_back_when_native_math_is_unavailable(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    store.insert_edge(first_id, second_id, 0.6, "explicit", created_at=created_at)
+    aged = created_at + timedelta(days=30)
+
+    native = store.graph_summary(now=aged)
+    store._aggregate_decay_sql = _DECAYED_WEIGHT_SQL
+    fallback = store.graph_summary(now=aged)
+    assert fallback.average_edge_weight == pytest.approx(native.average_edge_weight)
+    assert fallback.average_edge_weight == pytest.approx(0.3)
+
+
+def test_graph_summary_cache_refreshes_after_any_write(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    store.insert_edge(first_id, second_id, 0.6, "explicit")
+    assert store.graph_summary().edge_count == 1
+
+    third_id = remember(store, "third")
+    store.insert_edge(second_id, third_id, 0.4, "explicit")
+    assert store.graph_summary().edge_count == 2
+
+    store.forget_memory(third_id)
+    assert store.graph_summary().edge_count == 1
+    assert store.graph_summary().memory_count == 2
+
+
+def test_graph_summary_cache_does_not_serve_an_explicit_read_time(store: Store) -> None:
+    """A simulated clock must always see the graph at the instant it names."""
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    store.insert_edge(first_id, second_id, 0.6, "explicit", created_at=created_at)
+
+    store.graph_summary()  # populates the wall-clock cache
+    fresh = store.graph_summary(now=created_at)
+    aged = store.graph_summary(now=created_at + timedelta(days=30))
+    assert fresh.average_edge_weight == pytest.approx(0.6)
+    assert aged.average_edge_weight == pytest.approx(0.3)
+
+
+def test_graph_summary_cache_refreshes_when_the_half_life_changes(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    created_at = datetime.now(timezone.utc) - timedelta(days=30)
+    store.insert_edge(first_id, second_id, 0.8, "explicit", created_at=created_at)
+
+    thirty_day = store.graph_summary(half_life_days=30.0).average_edge_weight
+    sixty_day = store.graph_summary(half_life_days=60.0).average_edge_weight
+    assert thirty_day == pytest.approx(0.4, abs=1e-3)
+    assert sixty_day > thirty_day
+
+
+def test_graph_summary_rejects_an_unreadable_timestamp(store: Store) -> None:
+    """A corrupt timestamp must fail rather than shrink the average silently.
+
+    The callback raises on the NULL that julianday() returns. AVG skips NULL
+    instead, so the native path needs its own check to fail the same way.
+    """
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    store.insert_edge(first_id, second_id, 0.6, "explicit")
+    store._connection.execute("UPDATE edges SET last_reinforced_at = 'not a timestamp'")
+
+    with pytest.raises(RuntimeError, match="unreadable weight or timestamp"):
+        store.graph_summary()
 
 
 def test_bulk_edge_update_rolls_back_on_unknown_edge(store: Store) -> None:

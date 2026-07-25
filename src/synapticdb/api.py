@@ -104,6 +104,14 @@ class Synaptic:
         content: str,
         metadata: Mapping[str, object] | None = None,
     ) -> Memory:
+        """Store one memory and link it to what was stored around it.
+
+        Content is deduplicated by hash, so remembering the same text twice
+        returns the first memory and creates no second copy or new edges.
+        Storing also grows the association graph: memories written close
+        together in time gain a temporal edge, and every hundredth insert runs
+        the maintenance pass that prunes edges decayed below the floor.
+        """
         return self._remember_at(content, metadata, datetime.now(timezone.utc))
 
     def _remember_at(
@@ -476,6 +484,12 @@ class Synaptic:
         self._confidence.invalidate()
 
     def forget(self, memory_id: UUID) -> None:
+        """Delete one memory and every edge touching it.
+
+        Raises NotFoundError for an unknown id. Edge removal is a foreign-key
+        cascade, so the graph cannot keep an edge pointing at a memory that no
+        longer exists.
+        """
         self._require_open()
         if not isinstance(memory_id, UUID):
             raise InvalidArgumentError("memory_id must be a UUID")
@@ -483,6 +497,12 @@ class Synaptic:
         self._confidence.invalidate()
 
     def stats(self) -> Stats:
+        """Report memory and edge counts, edges by origin, and graph maturity.
+
+        Between writes this reuses the previous scan, so the decay reflected in
+        the reported averages can lag by the time since that scan. Any write
+        refreshes it.
+        """
         self._require_open()
         summary = self._store.graph_summary(half_life_days=self._half_life_days())
         return Stats(
@@ -494,12 +514,14 @@ class Synaptic:
         )
 
     def close(self) -> None:
+        """Release the database connection. Calling this twice is harmless."""
         if self._closed:
             return
         self._store.close()
         self._closed = True
 
     def __enter__(self) -> Synaptic:
+        """Enter a context that closes the database on exit."""
         self._require_open()
         return self
 
@@ -509,6 +531,7 @@ class Synaptic:
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        """Close the database, whether the block succeeded or raised."""
         self.close()
 
     def _maturity(self, summary: GraphSummary) -> float:
@@ -533,7 +556,6 @@ def _bounded_text(value: str, label: str) -> str:
     if len(value) > _MAX_TEXT_CHARS:
         raise InvalidArgumentError(f"{label} exceeds {_MAX_TEXT_CHARS} characters")
     return value
-
 
 
 def _top_k(value: int) -> int:
