@@ -29,9 +29,14 @@ agent can tell "there is no good answer" from "here are ten weak ones".
 pip install "synapticdb[embeddings]"
 ```
 
-The `embeddings` extra adds `sentence-transformers`, which lets SynapticDB load
-its default 384-dimensional `all-MiniLM-L6-v2` model on first use. Without the
-extra you must supply your own `embedding_fn`.
+| install | pulls | embeddings come from |
+|---|---|---|
+| `synapticdb` | pydantic, numpy | your `embedding_fn`, which is then required |
+| `synapticdb[embeddings]` | the above plus `sentence-transformers` | the built-in 384-dimensional `all-MiniLM-L6-v2`, downloaded on first use |
+
+Take the plain install when you already have an embedding provider, or when you
+do not want a PyTorch-sized dependency. Passing `embedding_fn` overrides the
+default either way.
 
 ```python
 from synapticdb import Synaptic
@@ -136,6 +141,31 @@ not prose that persuades.
 
 `bench/README.md` documents the profiles, the parameter sweeps, and every
 measurement.
+
+## What an associative answer looks like
+
+One of the 25 associative holdout queries, taken from that run. The baseline
+misses it; SynapticDB returns it at rank 6 with confidence 0.640.
+
+> **Query:** Why does the observatory dome trigger wind protection during calm
+> weather?
+>
+> **Answer returned:** Converting knots before publishing reduced false closure
+> alerts while preserving every genuinely windy shutdown.
+
+The answer shares almost no words with the question. It is reachable only
+through two intermediate memories, stored at different times and never
+mentioned in the query:
+
+1. Wind data reaches the dome controller through the Boreal weather adapter
+   added for the new roof station.
+2. Boreal labels its readings as meters per second but forwards the station's
+   original knot values unchanged.
+
+This is the shape of query hybrid search is built to lose, and the case the
+association graph exists to serve. Be precise about the credit, though: the
+graph records the path above, but hybrid search was already returning this
+answer before the graph was built. See below.
 
 ## What does not work, and why
 

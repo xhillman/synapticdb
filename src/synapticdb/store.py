@@ -482,6 +482,13 @@ class Store:
             if cached is not None:
                 return cached
         read_time = _require_utc(now or _utc_now(), "now")
+        summary = self._scan_graph_summary(read_time, half_life_days)
+        if now is None:
+            self._summary_cache = (self._connection.total_changes, half_life_days, summary)
+        return summary
+
+    def _scan_graph_summary(self, read_time: datetime, half_life_days: float) -> GraphSummary:
+        """Aggregate every edge at one read time."""
         # The average uses effective weights (PRD §6.4), so graph confidence
         # reports what the graph is worth now rather than what it once held.
         row = self._connection.execute(
@@ -507,7 +514,7 @@ class Store:
         # does. Count them separately and fail on the same condition.
         if int(row["unreadable_timestamps"]) > 0:
             raise RuntimeError("edge row contains an unreadable weight or timestamp")
-        summary = GraphSummary(
+        return GraphSummary(
             memory_count=int(row["memory_count"]),
             edge_count=int(row["edge_count"]),
             average_edge_weight=float(row["average_edge_weight"]),
@@ -517,9 +524,6 @@ class Store:
             co_retrieval_edges=int(row["co_retrieval_edges"]),
             explicit_edges=int(row["explicit_edges"]),
         )
-        if now is None:
-            self._summary_cache = (self._connection.total_changes, half_life_days, summary)
-        return summary
 
     def _cached_summary(self, half_life_days: float) -> GraphSummary | None:
         """Return the stored summary when no row has changed since it was taken."""
@@ -1065,14 +1069,22 @@ class Store:
             if identifier in positions
         }
 
-    def _required_memory_row(self, memory_id: UUID) -> sqlite3.Row:
+    def _required_row(self, table: str, label: str, identifier: str | UUID) -> sqlite3.Row:
+        """Fetch one row by primary key, or raise naming the id that missed.
+
+        `table` and `label` are literals supplied by the three call sites below,
+        never caller input.
+        """
         row = self._connection.execute(
-            "SELECT * FROM memories WHERE id = ?",
-            (str(memory_id),),
+            f"SELECT * FROM {table} WHERE id = ?",
+            (str(identifier),),
         ).fetchone()
         if row is None:
-            raise NotFoundError(f"unknown memory_id: {memory_id}")
+            raise NotFoundError(f"unknown {label}: {identifier}")
         return cast(sqlite3.Row, row)
+
+    def _required_memory_row(self, memory_id: UUID) -> sqlite3.Row:
+        return self._required_row("memories", "memory_id", memory_id)
 
     def _insert_query(self, query: _PreparedQuery) -> None:
         self._connection.execute(
@@ -1093,22 +1105,10 @@ class Store:
         )
 
     def _required_edge_row(self, edge_id: str) -> sqlite3.Row:
-        row = self._connection.execute(
-            "SELECT * FROM edges WHERE id = ?",
-            (edge_id,),
-        ).fetchone()
-        if row is None:
-            raise NotFoundError(f"unknown edge_id: {edge_id}")
-        return cast(sqlite3.Row, row)
+        return self._required_row("edges", "edge_id", edge_id)
 
     def _required_query_row(self, query_id: UUID) -> sqlite3.Row:
-        row = self._connection.execute(
-            "SELECT * FROM queries WHERE id = ?",
-            (str(query_id),),
-        ).fetchone()
-        if row is None:
-            raise NotFoundError(f"unknown query_id: {query_id}")
-        return cast(sqlite3.Row, row)
+        return self._required_row("queries", "query_id", query_id)
 
     def _require_memory_ids(self, identifiers: Sequence[str]) -> None:
         if not identifiers:
