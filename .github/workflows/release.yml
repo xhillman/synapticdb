@@ -1,0 +1,94 @@
+name: Release
+
+# Publishing uses PyPI Trusted Publishing (OIDC). No API token is stored in this
+# repository: GitHub mints a short-lived identity per run and PyPI verifies it
+# against the publisher configured for this workflow file.
+#
+# Manual run  -> TestPyPI, for rehearsing a release.
+# Tag v*      -> PyPI, the real thing.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install development dependencies
+        run: python -m pip install --disable-pip-version-check -e ".[dev]"
+      # A tag can be pushed to a commit CI never saw. Re-run the gates here so a
+      # release cannot ship code that would fail the quality workflow.
+      - name: Check formatting
+        run: ruff format --check .
+      - name: Lint
+        run: ruff check .
+      - name: Type check
+        run: mypy
+      - name: Test with warnings as errors
+        run: python -W error -m pytest
+      - name: Run dependency-free benchmark smoke gate
+        run: python -W error -m bench --profile smoke --retriever fixture --check --no-write
+      - name: Run Synaptic walking-skeleton smoke gate
+        run: python -W error -m bench --profile smoke --retriever synaptic --check --no-write
+      - name: Build wheel and source distribution
+        run: python -m build
+      - name: Verify the tag matches the packaged version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(python -c 'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          if [ "$tag_version" != "$package_version" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match pyproject version ${package_version}"
+            exit 1
+          fi
+      - name: Check distribution metadata
+        run: |
+          python -m pip install --disable-pip-version-check twine
+          twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+
+  publish-testpypi:
+    needs: build
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
