@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from synapticdb.activation import ActivationConfig
-from synapticdb.models import InvalidArgumentError
+from synapticdb.models import InvalidArgumentError, unit_float
 
 ParameterValue = float | int | tuple[float | int, ...] | None
 
@@ -102,51 +102,47 @@ def default_parameters() -> dict[str, ParameterValue]:
 
 def semantic_seed_config(params: Mapping[str, ParameterValue]) -> SemanticSeedConfig | None:
     """Read the semantic seed parameter group; None means the mechanism is off."""
-    value = params.get("semantic_seed")
-    if value is None:
+    if params.get("semantic_seed") is None:
         return None
-    if not isinstance(value, tuple) or len(value) != 3:
-        raise InvalidArgumentError("semantic_seed must contain threshold, max links, and weight")
-    threshold = _unit_float(value[0], "semantic seed threshold")
-    max_links = _bounded_int(value[1], "semantic seed max links", 40)
-    weight = _unit_float(value[2], "semantic seed weight")
-    return SemanticSeedConfig(threshold, max_links, weight)
+    value = _group_value(params, "semantic_seed", 3, "threshold, max links, and weight")
+    return SemanticSeedConfig(
+        unit_float(value[0], "semantic seed threshold"),
+        _bounded_int(value[1], "semantic seed max links", 40),
+        unit_float(value[2], "semantic seed weight"),
+    )
 
 
 def temporal_link_config(params: Mapping[str, ParameterValue]) -> TemporalLinkConfig:
     """Read and validate the temporal link parameter group."""
-    value = params.get("temporal_link")
-    if not isinstance(value, tuple) or len(value) != 3:
-        raise InvalidArgumentError("temporal_link must contain window, max links, and weight")
-    window = _bounded_int(value[0], "temporal window", 86_400)
-    max_links = _bounded_int(value[1], "temporal max links", 40)
-    weight = _unit_float(value[2], "temporal link weight")
-    return TemporalLinkConfig(window, max_links, weight)
+    value = _group_value(params, "temporal_link", 3, "window, max links, and weight")
+    return TemporalLinkConfig(
+        _bounded_int(value[0], "temporal window", 86_400),
+        _bounded_int(value[1], "temporal max links", 40),
+        unit_float(value[2], "temporal link weight"),
+    )
 
 
 def decay_config(params: Mapping[str, ParameterValue]) -> DecayConfig:
     """Read and validate the decay and prune parameter group."""
-    value = params.get("decay_and_prune")
-    if not isinstance(value, tuple) or len(value) != 2:
-        raise InvalidArgumentError("decay_and_prune must contain half-life days and prune threshold")
-    half_life_days = _bounded_int(value[0], "decay half-life days", _MAX_HALF_LIFE_DAYS)
-    prune_threshold = _unit_float(value[1], "prune threshold")
-    return DecayConfig(half_life_days, prune_threshold)
+    value = _group_value(params, "decay_and_prune", 2, "half-life days and prune threshold")
+    return DecayConfig(
+        _bounded_int(value[0], "decay half-life days", _MAX_HALF_LIFE_DAYS),
+        unit_float(value[1], "prune threshold"),
+    )
 
 
 def co_retrieval_config(params: Mapping[str, ParameterValue]) -> CoRetrievalConfig:
     """Read and validate the co-retrieval parameter group."""
-    value = params.get("co_retrieval")
-    if not isinstance(value, tuple) or len(value) != 2:
-        raise InvalidArgumentError("co_retrieval must contain initial weight and reinforcement rate")
-    initial_weight = _unit_float(value[0], "co-retrieval initial weight")
-    reinforcement_rate = _unit_float(value[1], "passive reinforcement rate")
-    return CoRetrievalConfig(initial_weight, reinforcement_rate)
+    value = _group_value(params, "co_retrieval", 2, "initial weight and reinforcement rate")
+    return CoRetrievalConfig(
+        unit_float(value[0], "co-retrieval initial weight"),
+        unit_float(value[1], "passive reinforcement rate"),
+    )
 
 
 def feedback_rate(params: Mapping[str, ParameterValue]) -> float:
     """Read and validate the explicit feedback rate."""
-    return _unit_float(_single_value(params, "feedback_rate"), "feedback rate")
+    return unit_float(_single_value(params, "feedback_rate"), "feedback rate")
 
 
 def fusion_config(params: Mapping[str, ParameterValue]) -> FusionConfig:
@@ -164,21 +160,21 @@ def activation_config(params: Mapping[str, ParameterValue]) -> ActivationConfig:
     return ActivationConfig(
         seeds=_bounded_int(_single_value(params, "activation_seeds"), "activation seeds", 100),
         max_steps=_bounded_int(_single_value(params, "activation_max_steps"), "activation max steps", 20),
-        decay=_unit_float(_single_value(params, "activation_decay"), "activation decay"),
-        min_energy=_unit_float(_single_value(params, "activation_min_energy"), "activation min energy"),
-        hop_bonus=_unit_float(_single_value(params, "hop_bonus"), "hop bonus"),
-        seed_penalty=_unit_float(_single_value(params, "seed_penalty"), "seed penalty"),
+        decay=unit_float(_single_value(params, "activation_decay"), "activation decay"),
+        min_energy=unit_float(_single_value(params, "activation_min_energy"), "activation min energy"),
+        hop_bonus=unit_float(_single_value(params, "hop_bonus"), "hop bonus"),
+        seed_penalty=unit_float(_single_value(params, "seed_penalty"), "seed penalty"),
     )
 
 
 def blend_weight(params: Mapping[str, ParameterValue]) -> float:
     """Read and validate the alpha ceiling applied to activation (PRD §5.3)."""
-    return _unit_float(_single_value(params, "activation_blend_weight"), "activation blend weight")
+    return unit_float(_single_value(params, "activation_blend_weight"), "activation blend weight")
 
 
 def connect_weight(params: Mapping[str, ParameterValue]) -> float:
     """Read and validate the weight an explicit connect asserts."""
-    return _unit_float(_single_value(params, "connect_weight"), "connect weight")
+    return unit_float(_single_value(params, "connect_weight"), "connect weight")
 
 
 def maintenance_interval(params: Mapping[str, ParameterValue]) -> int:
@@ -237,8 +233,8 @@ def co_retrieval_pairs(result_ids: Sequence[UUID]) -> tuple[tuple[UUID, UUID], .
 
 def reinforce_weight(weight: float, rate: float) -> float:
     """Return one passive reinforcement update."""
-    stored_weight = _unit_float(weight, "edge weight")
-    reinforcement_rate = _unit_float(rate, "reinforcement rate")
+    stored_weight = unit_float(weight, "edge weight")
+    reinforcement_rate = unit_float(rate, "reinforcement rate")
     return stored_weight + reinforcement_rate * (1.0 - stored_weight)
 
 
@@ -254,7 +250,7 @@ def positive_feedback_seed(
     as a PairSeed reinforce_rate produces that update exactly.
     """
     scale = _energy_product(first_energy, second_energy)
-    reinforcement_rate = _unit_float(rate, "feedback rate") * scale
+    reinforcement_rate = unit_float(rate, "feedback rate") * scale
     initial_weight = max(_FEEDBACK_EDGE_FLOOR, _CO_RETRIEVAL_SEED_WEIGHT * scale)
     return initial_weight, reinforcement_rate
 
@@ -271,15 +267,15 @@ def negative_feedback_weight(
     feedback builds on the decayed value rather than the stored one. The result
     cannot go negative, since rate·e_i·e_j never exceeds the rate itself.
     """
-    current = _unit_float(weight, "edge weight")
+    current = unit_float(weight, "edge weight")
     scale = _energy_product(first_energy, second_energy)
-    reduction = _unit_float(rate, "feedback rate") * scale
+    reduction = unit_float(rate, "feedback rate") * scale
     return current * (1.0 - reduction)
 
 
 def _energy_product(first_energy: float, second_energy: float) -> float:
-    first = _unit_float(first_energy, "energy")
-    second = _unit_float(second_energy, "energy")
+    first = unit_float(first_energy, "energy")
+    second = unit_float(second_energy, "energy")
     return first * second
 
 
@@ -290,7 +286,7 @@ def decayed_weight(weight: float, days_elapsed: float, half_life_days: float) ->
     A row written with a future timestamp is therefore treated as brand new
     rather than amplified, which keeps the result inside [0, 1].
     """
-    stored_weight = _unit_float(weight, "edge weight")
+    stored_weight = unit_float(weight, "edge weight")
     half_life = _positive_days(half_life_days, "decay half-life days")
     elapsed = _finite_float(days_elapsed, "elapsed days")
     if elapsed <= 0.0:
@@ -318,6 +314,23 @@ def _single_value(params: Mapping[str, ParameterValue], key: str) -> float | int
     value = params.get(key)
     if value is None or isinstance(value, tuple):
         raise InvalidArgumentError(f"{key} must be a single number")
+    return value
+
+
+def _group_value(
+    params: Mapping[str, ParameterValue],
+    key: str,
+    size: int,
+    contents: str,
+) -> tuple[float | int, ...]:
+    """Read one multi-value parameter group of exactly `size` entries.
+
+    The tuple sibling of _single_value: `contents` names the fields so a
+    malformed override says what it should have contained.
+    """
+    value = params.get(key)
+    if not isinstance(value, tuple) or len(value) != size:
+        raise InvalidArgumentError(f"{key} must contain {contents}")
     return value
 
 
@@ -352,18 +365,6 @@ def _utc_datetime(value: datetime, label: str) -> datetime:
     if value.tzinfo is None or value.utcoffset() != timedelta(0):
         raise InvalidArgumentError(f"{label} must use UTC")
     return value.astimezone(timezone.utc)
-
-
-def _unit_float(value: float | int, label: str) -> float:
-    if isinstance(value, bool):
-        raise InvalidArgumentError(f"{label} must be numeric")
-    try:
-        number = float(value)
-    except (TypeError, ValueError) as error:
-        raise InvalidArgumentError(f"{label} must be numeric") from error
-    if not math.isfinite(number) or not 0.0 <= number <= 1.0:
-        raise InvalidArgumentError(f"{label} must be between 0 and 1")
-    return number
 
 
 def _similarity_float(value: float) -> float:

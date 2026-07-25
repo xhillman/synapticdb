@@ -7,12 +7,10 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
-from synapticdb.models import InvalidArgumentError, RecallSource
+from synapticdb.models import InvalidArgumentError, RecallSource, unit_float
 
 RRF_K = 60
 ACTIVATION_BLEND_WEIGHT = 0.45
-# TODO(phase-5): this rejects rankings longer than 100, so a bench sweep of
-# candidate depth (PRD §9 parameter 2) past 100 would raise here.
 _MAX_RANKING_LENGTH = 100
 _MAX_SOURCE_COUNT = 4
 
@@ -100,8 +98,8 @@ def blend_rankings(
     its value and compresses every genuine discovery toward zero. A seed keeps
     its fusion score and is attributed to search, which is where it came from.
     """
-    maturity = _unit_float(confidence, "graph confidence")
-    weight = _unit_float(blend_weight, "activation blend weight")
+    maturity = unit_float(confidence, "graph confidence")
+    weight = unit_float(blend_weight, "activation blend weight")
     normalized_fusion = min_max_normalize(fusion_scores)
     if maturity == 0.0 or weight == 0.0:
         return tuple(BlendedHit(memory_id, score, "search") for memory_id, score in normalized_fusion.items())
@@ -140,11 +138,4 @@ def _recall_source(
     return "search"
 
 
-def _unit_float(value: float, label: str) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise InvalidArgumentError(f"{label} must be numeric") from exc
-    if not math.isfinite(number) or not 0.0 <= number <= 1.0:
-        raise InvalidArgumentError(f"{label} must be between 0 and 1")
-    return number
+

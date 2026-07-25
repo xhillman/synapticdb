@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -37,7 +36,14 @@ from synapticdb.learning import (
     temporal_link_config,
     unordered_pairs,
 )
-from synapticdb.models import InvalidArgumentError, Memory, Recalled, RecallResult, Stats
+from synapticdb.models import (
+    InvalidArgumentError,
+    Memory,
+    Recalled,
+    RecallResult,
+    Stats,
+    unit_float,
+)
 from synapticdb.retrieval import (
     BlendedHit,
     blend_rankings,
@@ -206,7 +212,7 @@ class Synaptic:
         one neighbor aged to a different instant than the next.
         """
         self._require_open()
-        floor = _unit_parameter(min_confidence, "min_confidence")
+        floor = unit_float(min_confidence, "min_confidence")
         started = time.perf_counter()
         text = _bounded_text(query, "query")
         result_limit = _top_k(top_k)
@@ -528,14 +534,6 @@ def _bounded_text(value: str, label: str) -> str:
         raise InvalidArgumentError(f"{label} exceeds {_MAX_TEXT_CHARS} characters")
     return value
 
-
-def _unit_parameter(value: float, label: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise InvalidArgumentError(f"{label} must be a number between 0 and 1")
-    number = float(value)
-    if not math.isfinite(number) or not 0.0 <= number <= 1.0:
-        raise InvalidArgumentError(f"{label} must be a number between 0 and 1")
-    return number
 
 
 def _top_k(value: int) -> int:

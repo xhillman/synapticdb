@@ -20,7 +20,14 @@ import numpy as np
 from numpy.typing import NDArray
 
 from synapticdb.learning import DEFAULT_HALF_LIFE_DAYS, decayed_weight, reinforce_weight
-from synapticdb.models import EdgeOrigin, EmbeddingError, InvalidArgumentError, Memory, NotFoundError
+from synapticdb.models import (
+    EdgeOrigin,
+    EmbeddingError,
+    InvalidArgumentError,
+    Memory,
+    NotFoundError,
+    unit_float,
+)
 
 CANDIDATE_LIMIT = 40
 _EDGE_LOOKUP_LIMIT = 400
@@ -487,7 +494,7 @@ class Store:
         self._require_open()
         a, b = _canonical_pair(first_id, second_id)
         edge_id = _edge_id(a, b)
-        asserted_weight = _unit_float(weight, "weight")
+        asserted_weight = unit_float(weight, "weight")
         stored_origin = _edge_origin(origin)
         timestamp = _require_utc(asserted_at or _utc_now(), "asserted_at")
         with self._connection:
@@ -530,7 +537,7 @@ class Store:
         self._require_open()
         a, b = _canonical_pair(first_id, second_id)
         edge_id = _edge_id(a, b)
-        stored_weight = _unit_float(weight, "weight")
+        stored_weight = unit_float(weight, "weight")
         stored_origin = _edge_origin(origin)
         timestamp = _require_utc(created_at or _utc_now(), "created_at")
         with self._connection:
@@ -884,7 +891,7 @@ class Store:
         """
         self._require_open()
         row_limit = _positive_limit(limit, "prune limit")
-        floor = _unit_float(threshold, "prune threshold")
+        floor = unit_float(threshold, "prune threshold")
         read_time = _require_utc(now or _utc_now(), "now")
         with self._connection:
             cursor = self._connection.execute(
@@ -1161,7 +1168,7 @@ def _prepare_metadata(metadata: Mapping[str, object]) -> str:
 
 
 def _prepare_weight_updates(updates: Sequence[tuple[str, float]]) -> tuple[tuple[str, float], ...]:
-    prepared = tuple((edge_id, _unit_float(weight, "weight")) for edge_id, weight in updates)
+    prepared = tuple((edge_id, unit_float(weight, "weight")) for edge_id, weight in updates)
     if not all(isinstance(edge_id, str) and edge_id for edge_id, _ in prepared):
         raise InvalidArgumentError("edge ids must be non-empty strings")
     if len({edge_id for edge_id, _ in prepared}) != len(prepared):
@@ -1187,9 +1194,9 @@ def _prepare_pair_seeds(pair_seeds: Sequence[PairSeed], limit: int) -> tuple[Pai
         PairSeed(
             seed.first_id,
             seed.second_id,
-            _unit_float(seed.weight, "weight"),
+            unit_float(seed.weight, "weight"),
             _edge_origin(seed.origin),
-            None if seed.reinforce_rate is None else _unit_float(seed.reinforce_rate, "reinforce rate"),
+            None if seed.reinforce_rate is None else unit_float(seed.reinforce_rate, "reinforce rate"),
         )
         for seed in seeds
     )
@@ -1209,9 +1216,9 @@ def _prepare_edge_seeds(edge_seeds: Sequence[EdgeSeed]) -> tuple[EdgeSeed, ...]:
     return tuple(
         EdgeSeed(
             seed.memory_id,
-            _unit_float(seed.weight, "weight"),
+            unit_float(seed.weight, "weight"),
             _edge_origin(seed.origin),
-            None if seed.reinforce_rate is None else _unit_float(seed.reinforce_rate, "reinforce rate"),
+            None if seed.reinforce_rate is None else unit_float(seed.reinforce_rate, "reinforce rate"),
         )
         for seed in seeds
     )
@@ -1362,16 +1369,6 @@ def _edge_origin(origin: EdgeOrigin) -> EdgeOrigin:
     if origin not in _EDGE_ORIGINS:
         raise InvalidArgumentError(f"unknown edge origin: {origin}")
     return origin
-
-
-def _unit_float(value: float, label: str) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError) as error:
-        raise InvalidArgumentError(f"{label} must be numeric") from error
-    if not math.isfinite(number) or number < 0.0 or number > 1.0:
-        raise InvalidArgumentError(f"{label} must be a finite value between 0 and 1")
-    return number
 
 
 def _require_utc(value: datetime, label: str) -> datetime:

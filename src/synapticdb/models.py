@@ -3,6 +3,7 @@
 Pure data definitions: no I/O, no imports from the rest of the package.
 """
 
+import math
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -30,6 +31,21 @@ class InvalidArgumentError(SynapticError):
 
 class EmbeddingError(SynapticError):
     """Embedding function missing, failed, or returned the wrong dimension."""
+
+
+def unit_float(value: float, label: str) -> float:
+    """Validate a weight, energy, score, or threshold on the closed unit scale.
+
+    Lives here because every layer needs it and this is the module they all
+    already import. Booleans are rejected rather than coerced: `True` is a
+    caller mistake, not the weight 1.0.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise InvalidArgumentError(f"{label} must be numeric")
+    number = float(value)
+    if not math.isfinite(number) or not 0.0 <= number <= 1.0:
+        raise InvalidArgumentError(f"{label} must be between 0 and 1")
+    return number
 
 
 class Memory(BaseModel):

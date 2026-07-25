@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
-from synapticdb.models import InvalidArgumentError
+from synapticdb.models import InvalidArgumentError, unit_float
 
 ACTIVATION_DECAY = 0.2
 ACTIVATION_HOP_BONUS = 0.15
@@ -217,7 +216,7 @@ def _prepare_seeds(seeds: Sequence[Seed], config: ActivationConfig) -> tuple[See
     for memory_id, energy in prepared:
         if not isinstance(memory_id, UUID):
             raise InvalidArgumentError("activation seed IDs must be UUID values")
-        _unit_float(energy, "activation seed energy")
+        unit_float(energy, "activation seed energy")
         identifiers.append(memory_id)
     if len(set(identifiers)) != len(identifiers):
         raise InvalidArgumentError("activation seed IDs must be unique")
@@ -233,14 +232,5 @@ def _prepare_neighbors(neighbors: Sequence[Neighbor]) -> tuple[Neighbor, ...]:
             raise InvalidArgumentError("neighbor lookup must return Neighbor values")
         if not isinstance(neighbor.memory_id, UUID) or not neighbor.edge_id:
             raise InvalidArgumentError("activation neighbors require a UUID and edge ID")
-        _unit_float(neighbor.weight, "activation edge weight")
+        unit_float(neighbor.weight, "activation edge weight")
     return prepared
-
-
-def _unit_float(value: float, label: str) -> None:
-    try:
-        number = float(value)
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise InvalidArgumentError(f"{label} must be numeric") from exc
-    if not math.isfinite(number) or not 0.0 <= number <= 1.0:
-        raise InvalidArgumentError(f"{label} must be between 0 and 1")
