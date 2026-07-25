@@ -30,6 +30,7 @@ _RECALL_EDGE_LIMIT = 10
 # PRD §6.6 pairs *every* result, so a maximal top_k of 100 gives C(100, 2).
 _FEEDBACK_EDGE_LIMIT = 4950
 _EXPIRE_BATCH_LIMIT = 1000
+_PRUNE_BATCH_LIMIT = 1000
 _QUERY_TOKEN_LIMIT = 64
 _TEMPORAL_LINK_LIMIT = 40
 _TEMPORAL_WINDOW_LIMIT = 86_400
@@ -89,6 +90,9 @@ class PairSeed:
 class MemoryInsert:
     memory: Memory
     inserted: bool
+    # Durable count of real inserts, so the caller can decide when to run
+    # maintenance. Zero when this call deduplicated and stored nothing.
+    remember_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,8 +334,9 @@ class Store:
             row = self._required_memory_row(identifier)
             for seed in seeds:
                 self._write_edge(identifier, seed, timestamp, half_life_days)
+            remember_count = self._bump_remember_count()
         self._append_vector_cache(identifier, vector)
-        return MemoryInsert(_memory_from_row(row), True)
+        return MemoryInsert(_memory_from_row(row), True, remember_count)
 
     def get_memory(self, memory_id: UUID) -> Memory:
         self._require_open()
@@ -861,6 +866,40 @@ class Store:
             updated = self._required_query_row(query_id)
         return _query_from_row(updated)
 
+    def prune_weak_edges(
+        self,
+        threshold: float,
+        *,
+        now: datetime | None = None,
+        half_life_days: float = DEFAULT_HALF_LIFE_DAYS,
+        limit: int = _PRUNE_BATCH_LIMIT,
+    ) -> int:
+        """Delete edges whose *effective* weight has fallen below the threshold.
+
+        Comparing the decayed value is the point (PRD §6.5 with §6.4): an edge
+        is retired once decay has actually retired it, not when its stored
+        weight happens to be small. Bounded per call — anything past the limit
+        waits for the next pass rather than raising, so one maintenance run is
+        always bounded work.
+        """
+        self._require_open()
+        row_limit = _positive_limit(limit, "prune limit")
+        floor = _unit_float(threshold, "prune threshold")
+        read_time = _require_utc(now or _utc_now(), "now")
+        with self._connection:
+            cursor = self._connection.execute(
+                f"""
+                DELETE FROM edges WHERE id IN (
+                    SELECT id FROM edges
+                    WHERE {_DECAYED_WEIGHT_SQL} < ?
+                    ORDER BY rowid
+                    LIMIT ?
+                )
+                """,
+                (read_time.isoformat(), half_life_days, floor, row_limit),
+            )
+        return cursor.rowcount
+
     def expire_queries(
         self,
         *,
@@ -992,6 +1031,26 @@ class Store:
         ).fetchall()
         by_id = {row["id"]: row for row in rows}
         return tuple(by_id[edge_id] for edge_id in edge_ids)
+
+    def _bump_remember_count(self) -> int:
+        """Advance the durable insert counter inside the caller's transaction.
+
+        Durable rather than in-process: an agent that remembers a handful of
+        things per invocation would otherwise never reach the maintenance
+        interval, and its graph would grow without bound.
+        """
+        self._connection.execute(
+            """
+            INSERT INTO meta (key, value) VALUES ('remember_count', '1')
+            ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)
+            """
+        )
+        row = self._connection.execute(
+            "SELECT value FROM meta WHERE key = 'remember_count'",
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("remember counter vanished during its own update")
+        return int(row["value"])
 
     def _ensure_embedding_dimension(self, dimension: int) -> None:
         stored = self.embedding_dimension()

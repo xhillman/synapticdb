@@ -422,6 +422,77 @@ def test_forget_removes_a_connected_memory_and_its_edge() -> None:
         assert memory._store.list_edges_for_node(first.id) == ()
 
 
+def test_maintenance_fires_on_the_interval_and_not_before() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        memory._params["maintenance_interval"] = 4
+        anchor = memory._remember_at("alpha anchor", None, started)
+        stale = memory._remember_at("gamma stale", None, started)
+        memory._connect_at(anchor.id, stale.id, started)
+        # An explicit 0.5 edge is worth ~0.0004 after 300 days, well under the
+        # 0.02 floor: exactly what maintenance is meant to collect.
+        assert memory.stats().edges == 1
+
+        much_later = started + timedelta(days=300)
+        memory._remember_at("delta third", None, much_later)
+        # Three inserts so far; the interval has not come round.
+        assert memory._store.get_edge_between(anchor.id, stale.id) is not None
+
+        memory._remember_at("delta fourth", None, much_later)
+        assert memory._store.get_edge_between(anchor.id, stale.id) is None
+
+
+def test_maintenance_keeps_edges_decay_has_not_worn_out() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        memory._params["maintenance_interval"] = 2
+        anchor = memory._remember_at("alpha anchor", None, started)
+        fresh = memory._remember_at("gamma fresh", None, started)
+        memory._connect_at(anchor.id, fresh.id, started)
+
+        # Same instant, so nothing has aged: a maintenance pass must not touch
+        # a healthy graph.
+        assert memory.stats().edges == 1
+        assert memory._store.get_edge_between(anchor.id, fresh.id) is not None
+
+
+def test_maintenance_reports_the_smaller_graph_through_stats() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        memory._params["maintenance_interval"] = 4
+        first = memory._remember_at("alpha one", None, started)
+        second = memory._remember_at("gamma two", None, started)
+        memory._connect_at(first.id, second.id, started)
+        assert memory.stats().edges == 1
+
+        much_later = started + timedelta(days=300)
+        memory._remember_at("delta three", None, much_later)
+        memory._remember_at("delta four", None, much_later)
+        # stats() reads through the confidence cache, so a stale cache here
+        # would mean the prune skipped its invalidation. The worn-out explicit
+        # edge is gone; the temporal edge those two inserts just created is
+        # fresh, so it correctly survives its own maintenance pass.
+        after = memory.stats()
+        assert after.edges_by_origin["explicit"] == 0
+        assert after.edges_by_origin["temporal"] == 1
+
+
+def test_a_deduplicated_remember_does_not_advance_maintenance() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        memory._params["maintenance_interval"] = 2
+        anchor = memory._remember_at("alpha anchor", None, started)
+        stale = memory._remember_at("gamma stale", None, started)
+        memory._connect_at(anchor.id, stale.id, started)
+
+        much_later = started + timedelta(days=300)
+        # Re-remembering existing content stores nothing, so it grew no graph
+        # and must not count toward the interval.
+        memory._remember_at("alpha anchor", None, much_later)
+        memory._remember_at("gamma stale", None, much_later)
+        assert memory._store.get_edge_between(anchor.id, stale.id) is not None
+
+
 def test_forget_stats_and_context_manager() -> None:
     memory = Synaptic(":memory:", embedding_fn=embedding)
     with memory:

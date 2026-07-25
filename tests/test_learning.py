@@ -25,6 +25,7 @@ from synapticdb.learning import (
     effective_weight,
     feedback_rate,
     fusion_config,
+    maintenance_interval,
     negative_feedback_weight,
     passive_reinforcement_rate,
     positive_feedback_seed,
@@ -125,10 +126,25 @@ def test_connect_weight_reads_the_specified_value() -> None:
     assert connect_weight(default_parameters()) == 0.5
 
 
+def test_maintenance_interval_reads_the_specified_value() -> None:
+    assert maintenance_interval(default_parameters()) == 100
+
+
+@pytest.mark.parametrize("value", [0, -1, None, (100,), 100_001])
+def test_maintenance_interval_rejects_a_malformed_value(value: object) -> None:
+    params = default_parameters()
+    params["maintenance_interval"] = value  # type: ignore[assignment]
+    with pytest.raises(InvalidArgumentError):
+        maintenance_interval(params)
+
+
 def test_the_whole_parameter_budget_is_readable() -> None:
     params = default_parameters()
     assert fusion_config(params) == FusionConfig(40, 60)
     assert blend_weight(params) == 0.45
+    # The last group to be wired: every parameter PRD §9 promises the harness
+    # can sweep is now actually read.
+    assert maintenance_interval(params) == 100
     assert activation_config(params) == ActivationConfig(
         seeds=5, max_steps=5, decay=0.2, min_energy=0.05, hop_bonus=0.15, seed_penalty=0.2
     )

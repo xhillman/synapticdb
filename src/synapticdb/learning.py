@@ -176,6 +176,11 @@ def connect_weight(params: Mapping[str, ParameterValue]) -> float:
     return _unit_float(_single_value(params, "connect_weight"), "connect weight")
 
 
+def maintenance_interval(params: Mapping[str, ParameterValue]) -> int:
+    """Read how many inserts pass between maintenance runs (PRD §6.5)."""
+    return _bounded_int(_single_value(params, "maintenance_interval"), "maintenance interval", 100_000)
+
+
 def passive_reinforcement_rate(params: Mapping[str, ParameterValue]) -> float:
     """Return the passive reinforcement rate shared by learning mechanisms."""
     return co_retrieval_config(params).reinforcement_rate

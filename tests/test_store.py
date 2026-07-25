@@ -639,6 +639,59 @@ def test_edges_by_ids_skips_rows_that_no_longer_exist(store: Store) -> None:
     assert store.edges_by_ids((edge.id,)) == ()
 
 
+def test_pruning_retires_an_edge_decay_has_worn_out(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    long_ago = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    # Stored weight 0.2 is far above the 0.02 floor; after 300 days its
+    # effective weight is ~0.0002. Comparing the stored value would keep it.
+    store.insert_edge(first_id, second_id, 0.2, "temporal", created_at=long_ago)
+
+    assert store.prune_weak_edges(0.02, now=long_ago) == 0
+    assert store.prune_weak_edges(0.02, now=long_ago + timedelta(days=300)) == 1
+    assert store.graph_summary().edge_count == 0
+
+
+def test_pruning_keeps_an_edge_exactly_at_the_threshold(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    store.insert_edge(first_id, second_id, 0.02, "co_retrieval", created_at=created_at)
+
+    # The rule is "below the threshold", not "at or below".
+    assert store.prune_weak_edges(0.02, now=created_at) == 0
+    assert store.graph_summary().edge_count == 1
+
+
+def test_pruning_is_bounded_and_leaves_the_rest_for_the_next_pass(store: Store) -> None:
+    center_id = remember(store, "center")
+    created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for index in range(5):
+        other_id = remember(store, f"other {index}")
+        store.insert_edge(center_id, other_id, 0.01, "co_retrieval", created_at=created_at)
+
+    assert store.prune_weak_edges(0.02, now=created_at, limit=2) == 2
+    assert store.graph_summary().edge_count == 3
+    # The remainder waits rather than raising: one pass is bounded work.
+    assert store.prune_weak_edges(0.02, now=created_at, limit=10) == 3
+    assert store.graph_summary().edge_count == 0
+
+
+def test_remember_counter_is_durable_and_ignores_deduplication(tmp_path: Path) -> None:
+    db_path = tmp_path / "counter.db"
+    with Store(db_path) as first:
+        assert first.insert_memory_with_edges("one", {}, (1.0, 0.0), ()).remember_count == 1
+        assert first.insert_memory_with_edges("two", {}, (1.0, 0.0), ()).remember_count == 2
+        duplicate = first.insert_memory_with_edges("one", {}, (1.0, 0.0), ())
+        # A deduplicated call stores nothing, so it grew no graph to maintain.
+        assert duplicate.inserted is False
+        assert duplicate.remember_count == 0
+    with Store(db_path) as reopened:
+        # Durable: an agent that remembers a few things per run still reaches
+        # the maintenance interval eventually.
+        assert reopened.insert_memory_with_edges("three", {}, (1.0, 0.0), ()).remember_count == 3
+
+
 def test_query_validation_rejects_incomplete_data(store: Store) -> None:
     memory_id = remember(store, "first")
     with pytest.raises(InvalidArgumentError, match="missing energy"):

@@ -91,6 +91,13 @@ warm-up that traverses the same chains as the holdout, which needs the
 multi-query chains of Phase B. What Phase A adds is the ability to age a graph
 and to detect a collapse.
 
+**Nor can it measure maintenance and pruning (PRD §6.5).** Maintenance triggers
+on `remember`, and the harness performs every remember during ingest, before
+anything has aged — so a pass fires five times on the full profile and deletes
+nothing. Measuring it needs writes *interleaved* with simulated time, not just
+queries replayed after it. Until then, maintenance must be a no-op here, which
+makes it a regression check rather than a measurement.
+
 Canonical results live in `bench/records/`, one directory per promoted run
 (`report.md` + `report.json`, stamped with the git commit of the code under
 test). `bench/artifacts/` is transient and gitignored; promote a run by

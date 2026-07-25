@@ -26,6 +26,7 @@ from synapticdb.learning import (
     default_parameters,
     feedback_rate,
     fusion_config,
+    maintenance_interval,
     negative_feedback_weight,
     passive_reinforcement_rate,
     positive_feedback_seed,
@@ -118,7 +119,27 @@ class Synaptic:
         )
         if result.inserted:
             self._confidence.invalidate()
+            self._maintain_if_due(result.remember_count, created_at)
         return result.memory
+
+    def _maintain_if_due(self, remember_count: int, now: datetime) -> None:
+        """Run the PRD §6.5 pass every Nth insert, at this insert's instant.
+
+        Errors are not caught. A prune that cannot run leaves the graph
+        accumulating dead edges indefinitely, which is worse than a loud
+        failure; the memory itself is already committed either way.
+        """
+        if remember_count % maintenance_interval(self._params) != 0:
+            return
+        decay = decay_config(self._params)
+        pruned = self._store.prune_weak_edges(
+            decay.prune_threshold,
+            now=now,
+            half_life_days=float(decay.half_life_days),
+        )
+        self._store.expire_queries(now=now)
+        if pruned:
+            self._confidence.invalidate()
 
     def _load_remember_edge_seeds(
         self,
