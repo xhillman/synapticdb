@@ -1,0 +1,26 @@
+{"chain_query_id": "Q-026", "expected_memory_id": "mem-0002", "positive": true, "text": "Which radio modules did the Alder depot gateways receive in the spring retrofit?"}
+{"chain_query_id": "Q-027", "expected_memory_id": "mem-0006", "positive": true, "text": "Which layout profile configures the label printers used in zone C?"}
+{"chain_query_id": "Q-028", "expected_memory_id": "mem-0010", "positive": true, "text": "Which scheduling worker handles portal changes before they reach practitioner calendars?"}
+{"chain_query_id": "Q-029", "expected_memory_id": "mem-0014", "positive": true, "text": "Which timing board does the east orchard field controller run?"}
+{"chain_query_id": "Q-030", "expected_memory_id": "mem-0018", "positive": true, "text": "Which broker group consumes the westbound station updates?"}
+{"chain_query_id": "Q-031", "expected_memory_id": "mem-0022", "positive": true, "text": "Which proximity beacons were installed in the west gallery after the construction work?"}
+{"chain_query_id": "Q-032", "expected_memory_id": "mem-0026", "positive": true, "text": "Which access server do the hotel elevator readers validate credentials against?"}
+{"chain_query_id": "Q-033", "expected_memory_id": "mem-0030", "positive": true, "text": "Which sensor cartridge reports humidity in proofing cabinet seven?"}
+{"chain_query_id": "Q-034", "expected_memory_id": "mem-0034", "positive": true, "text": "Which network template was dock three moved onto during its renovation?"}
+{"chain_query_id": "Q-035", "expected_memory_id": "mem-0038", "positive": true, "text": "Which camera handles transparent-item classification on the sorting line?"}
+{"chain_query_id": "Q-036", "expected_memory_id": "mem-0042", "positive": true, "text": "Which campus service provides the weekly schedule manifest to the displays?"}
+{"chain_query_id": "Q-037", "expected_memory_id": "mem-0046", "positive": true, "text": "What identifier format do the partner clinics use on their sample tubes?"}
+{"chain_query_id": "Q-038", "expected_memory_id": "mem-0050", "positive": true, "text": "Which conversion profile does the south project use to import positioning data?"}
+{"chain_query_id": "Q-039", "expected_memory_id": "mem-0054", "positive": true, "text": "Which audio feed drives subtitle timing for the touring production?"}
+{"chain_query_id": "Q-040", "expected_memory_id": "mem-0058", "positive": true, "text": "Which retry queue carries stock decrements from the mobile checkout tablets?"}
+{"chain_query_id": "Q-041", "expected_memory_id": "mem-0062", "positive": true, "text": "Which weather adapter feeds wind data to the dome controller?"}
+{"chain_query_id": "Q-042", "expected_memory_id": "mem-0066", "positive": true, "text": "Which web client stores the language preference on the outdoor kiosk tablets?"}
+{"chain_query_id": "Q-043", "expected_memory_id": "mem-0070", "positive": true, "text": "Which collector reports dock occupancy to the bicycle map?"}
+{"chain_query_id": "Q-044", "expected_memory_id": "mem-0074", "positive": true, "text": "When did kiln four receive its current temperature probe?"}
+{"chain_query_id": "Q-045", "expected_memory_id": "mem-0078", "positive": true, "text": "Which motion package was installed on the trail cameras during the winter survey?"}
+{"chain_query_id": "Q-046", "expected_memory_id": "mem-0082", "positive": true, "text": "Which data source does the public availability board read from?"}
+{"chain_query_id": "Q-047", "expected_memory_id": "mem-0086", "positive": true, "text": "Which pressure sensor informs the filtration pump decisions?"}
+{"chain_query_id": "Q-048", "expected_memory_id": "mem-0090", "positive": true, "text": "Which scheduler handles song selection at the station?"}
+{"chain_query_id": "Q-049", "expected_memory_id": "mem-0094", "positive": true, "text": "Which probe reports the dye-vat temperature?"}
+{"chain_query_id": "Q-050", "expected_memory_id": "mem-0098", "positive": true, "text": "Which field queue replays offline scans when a distribution center reconnects?"}
+{"positive": false, "text": "What was the fictional lunar terminal's catering budget?"}

@@ -24,7 +24,12 @@ from .contracts import (
 ROOT = Path(__file__).resolve().parent / "data"
 MEMORY_TYPES = ("factual", "episodic", "procedural", "contextual")
 SOURCES = ("incident-log", "runbook", "service-ticket", "field-note")
-ChainSpec = tuple[str, str, str, str, str, str, str]
+# organization, anchor, bridge, bridge, target, holdout question, note, and a
+# warm-up question. The warm-up asks about the chain's *mechanism* while the
+# holdout asks about its symptom, so warming traverses the same memories
+# without ever surfacing the answer. Both live in one tuple so the pairing
+# cannot drift.
+ChainSpec = tuple[str, str, str, str, str, str, str, str]
 
 
 CHAIN_SPECS = (
@@ -36,6 +41,7 @@ CHAIN_SPECS = (
         "The fleet profile now keeps radio polling active during battery operation; packet completeness returned to 99.8 percent on the next twelve routes.",
         "Why do refrigerated shipments lose temperature readings after leaving the Alder depot?",
         "The apparent sensor gap leads through the depot gateway and its radio power policy.",
+        "Which radio modules did the Alder depot gateways receive in the spring retrofit?",
     ),
     (
         "Lumen Depot",
@@ -45,6 +51,7 @@ CHAIN_SPECS = (
         "A 300-DPI layout was deployed and the crop coordinates were regenerated; the following 4,800 picks had no adjacent-label substitutions.",
         "What is causing incorrect product codes during picking in zone C?",
         "The scan errors trace from the zone-specific printer profile to a resolution mismatch.",
+        "Which layout profile configures the label printers used in zone C?",
     ),
     (
         "Willow Clinic",
@@ -54,6 +61,7 @@ CHAIN_SPECS = (
         "The worker now normalizes both timestamps before comparison and a cleanup removed the duplicate slots without changing valid bookings.",
         "Why are rescheduled afternoon visits appearing twice on clinic calendars?",
         "The duplicate booking symptom is connected to the scheduling worker's timestamp comparison order.",
+        "Which scheduling worker handles portal changes before they reach practitioner calendars?",
     ),
     (
         "Morrow Orchard",
@@ -63,6 +71,7 @@ CHAIN_SPECS = (
         "Installing the compensated timing package stopped the accumulated drift; valve starts stayed within thirty seconds for six weeks.",
         "Why do the east orchard rows start watering progressively later?",
         "The growing schedule delay leads through the unique solar controller to its uncompensated clock.",
+        "Which timing board does the east orchard field controller run?",
     ),
     (
         "Ember Rail",
@@ -72,6 +81,7 @@ CHAIN_SPECS = (
         "Giving reconciliation a separate consumer group restored live status flow and replayed the unprocessed station events.",
         "Why are westbound cargo updates stale despite successful station scans?",
         "The stale status connects through shared message consumption to a colliding consumer-group identity.",
+        "Which broker group consumes the westbound station updates?",
     ),
     (
         "Cedar Museum",
@@ -81,6 +91,7 @@ CHAIN_SPECS = (
         "Publishing the new beacon namespace in manifest revision 18 restored exhibit recognition without an application release.",
         "Why do audio guides fail only in the museum's west gallery?",
         "The gallery-specific failure leads through replacement beacons to an outdated offline identifier manifest.",
+        "Which proximity beacons were installed in the west gallery after the construction work?",
     ),
     (
         "Harborlight Hotel",
@@ -90,6 +101,7 @@ CHAIN_SPECS = (
         "The complete trust chain was added to the access-server bundle and newly issued cards began working at every elevator reader.",
         "Why do newly issued hotel key cards open rooms but not elevators?",
         "The split behavior leads through server-based elevator validation to an incomplete certificate chain.",
+        "Which access server do the hotel elevator readers validate credentials against?",
     ),
     (
         "Brindle Bakery",
@@ -99,6 +111,7 @@ CHAIN_SPECS = (
         "A conversion factor was added to the cabinet profile; loaf volume returned to its normal range in the next production run.",
         "Why are morning loaves dense when the recipe and mixing process are unchanged?",
         "The texture problem leads through proofing conditions to a humidity-unit mismatch.",
+        "Which sensor cartridge reports humidity in proofing cabinet seven?",
     ),
     (
         "Silverwake Ferry",
@@ -108,6 +121,7 @@ CHAIN_SPECS = (
         "Applying the transit-device VLAN profile eliminated lease expiration during boarding and stabilized all six scanners.",
         "Why do dock-three boarding scanners disconnect just before departure?",
         "The time-specific disconnect leads through the renovated dock network to an unsuitable lease policy.",
+        "Which network template was dock three moved onto during its renovation?",
     ),
     (
         "Clearbrook Recycling",
@@ -117,6 +131,7 @@ CHAIN_SPECS = (
         "Restoring the fixed exposure profile raised transparent-container classification to 98.6 percent during the validation shift.",
         "Why is the recycling line misclassifying transparent containers?",
         "The material error connects through a serviced camera to an exposure-profile reset.",
+        "Which camera handles transparent-item classification on the sorting line?",
     ),
     (
         "Pinebridge University",
@@ -126,6 +141,7 @@ CHAIN_SPECS = (
         "Versioned manifest filenames and a publish-time purge made new schedules visible immediately on all room displays.",
         "Why are science-building room schedules blank on Monday mornings?",
         "The weekly display failure leads through manifest delivery to a stale building cache.",
+        "Which campus service provides the weekly schedule manifest to the displays?",
     ),
     (
         "Meadow Veterinary Lab",
@@ -135,6 +151,7 @@ CHAIN_SPECS = (
         "Identifier handling was changed to validated strings and the unmatched results were reconciled from the audit queue.",
         "Why are some successfully scanned laboratory samples missing their intake records?",
         "The matching failure leads through a partner identifier format to destructive numeric conversion.",
+        "What identifier format do the partner clinics use on their sample tubes?",
     ),
     (
         "Granite Survey",
@@ -144,6 +161,7 @@ CHAIN_SPECS = (
         "Switching the conversion profile to the regional geoid aligned drone surfaces with every surveyed control point.",
         "Why are south-site drone maps vertically offset from surveyed control points?",
         "The constant elevation error leads through the terrain profile to incompatible vertical datums.",
+        "Which conversion profile does the south project use to import positioning data?",
     ),
     (
         "Lantern Theater",
@@ -153,6 +171,7 @@ CHAIN_SPECS = (
         "Resampling the feed to the declared rate kept subtitles aligned through the full three-hour dress rehearsal.",
         "Why do theater subtitles gradually fall behind even though every act starts synchronized?",
         "The cumulative drift connects through the touring audio feed to a sample-rate discrepancy.",
+        "Which audio feed drives subtitle timing for the touring production?",
     ),
     (
         "Hearthside Food Bank",
@@ -162,6 +181,7 @@ CHAIN_SPECS = (
         "Checkout now assigns an immutable operation key to each decrement; duplicate retries are ignored and stock totals remain nonnegative.",
         "Why does food-bank inventory become negative during busy distribution periods?",
         "The stock anomaly leads through congested tablet retries to missing operation idempotency.",
+        "Which retry queue carries stock decrements from the mobile checkout tablets?",
     ),
     (
         "Violet Observatory",
@@ -171,6 +191,7 @@ CHAIN_SPECS = (
         "Converting knots before publishing reduced false closure alerts while preserving every genuinely windy shutdown.",
         "Why does the observatory dome trigger wind protection during calm weather?",
         "The false safety response leads through the weather adapter to mislabeled units.",
+        "Which weather adapter feeds wind data to the dome controller?",
     ),
     (
         "Juniper Gardens",
@@ -180,6 +201,7 @@ CHAIN_SPECS = (
         "Moving the preference to local kiosk storage preserved language selection throughout each visitor session.",
         "Why do garden kiosks forget a visitor's language selection between pages?",
         "The reset behavior leads through client-side preference storage to an unusable secure cookie.",
+        "Which web client stores the language preference on the outdoor kiosk tablets?",
     ),
     (
         "Redwood Bicycle Share",
@@ -189,6 +211,7 @@ CHAIN_SPECS = (
         "Reducing the batch size and adding a two-second flush updated station capacity promptly throughout the evening commute.",
         "Why does the bicycle map show full stations after bicycles have been removed?",
         "The stale capacity display leads through heartbeat collection to an oversized batching rule.",
+        "Which collector reports dock occupancy to the bicycle map?",
     ),
     (
         "Orchid Ceramics",
@@ -198,6 +221,7 @@ CHAIN_SPECS = (
         "Changing the controller channel to type K brought reference-cone readings and panel temperatures back into agreement.",
         "Why is kiln four overheating while its display appears correct?",
         "The hidden temperature error leads through a replaced probe to the wrong thermocouple profile.",
+        "When did kiln four receive its current temperature probe?",
     ),
     (
         "Mossland Wildlife Trust",
@@ -207,6 +231,7 @@ CHAIN_SPECS = (
         "Persisting debounce state across recordings reduced false captures and restored the expected battery lifetime.",
         "Why did trail-camera battery life collapse after the winter survey update?",
         "The power drain leads through the motion package to repeated vegetation triggers.",
+        "Which motion package was installed on the trail cameras during the winter survey?",
     ),
     (
         "Bluehaven Campgrounds",
@@ -216,6 +241,7 @@ CHAIN_SPECS = (
         "Chunking the pricing refresh into small commits kept replication delay below three seconds during subsequent runs.",
         "Why do campground reservations temporarily vanish from the public availability board?",
         "The delayed visibility leads through the read replica to a long-running pricing transaction.",
+        "Which data source does the public availability board read from?",
     ),
     (
         "Glassfin Aquarium",
@@ -225,6 +251,7 @@ CHAIN_SPECS = (
         "Adding a pressure deadband stopped rapid cycling without changing normal filtration response.",
         "Why are aquarium filtration pumps rapidly cycling under stable pressure?",
         "The mechanical cycling leads through threshold readings to missing controller hysteresis.",
+        "Which pressure sensor informs the filtration pump decisions?",
     ),
     (
         "Maple Community Radio",
@@ -234,6 +261,7 @@ CHAIN_SPECS = (
         "Persisting the cursor before maintenance produced varied openings while retaining the approved rotation rules.",
         "Why does the radio station repeat its opening songs every morning?",
         "The repeated sequence leads through overnight scheduler restarts to an unsaved playlist cursor.",
+        "Which scheduler handles song selection at the station?",
     ),
     (
         "Sable Textile Cooperative",
@@ -243,6 +271,7 @@ CHAIN_SPECS = (
         "Removing the duplicate offset restored the target shade across three validation batches.",
         "Why are textile dye batches lighter when pigment quantities have not changed?",
         "The shade change leads through vat conditions to a duplicated probe calibration offset.",
+        "Which probe reports the dye-vat temperature?",
     ),
     (
         "Beacon Relief Cooperative",
@@ -252,6 +281,7 @@ CHAIN_SPECS = (
         "Preserving original event identifiers allowed the inventory service to discard replayed duplicates automatically.",
         "Why do relief-supply pallet counts double after offline scanners reconnect?",
         "The duplicate inventory leads through offline replay to regenerated event identities.",
+        "Which field queue replays offline scans when a distribution center reconnects?",
     ),
 )
 
@@ -424,8 +454,8 @@ def _memory(
     }
 
 
-def _chain_rows(index: int, spec: ChainSpec) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
-    organization, anchor, bridge_one, bridge_two, target, query, note = spec
+def _chain_rows(index: int, spec: ChainSpec) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any], list[str]]:
+    organization, anchor, bridge_one, bridge_two, target, query, note, warmup_query = spec
     start = (index - 1) * 4 + 1
     ids = [f"mem-{start + step:04d}" for step in range(4)]
     contents = (anchor, bridge_one, bridge_two, target)
@@ -457,10 +487,20 @@ def _chain_rows(index: int, spec: ChainSpec) -> tuple[list[dict[str, Any]], dict
         "required_intermediate_node_ids": [ids[1], ids[2]],
         "reviewer_note": note,
     }
+    # The warm-up surfaces the first bridge; the holdout target is ids[3]. They
+    # cannot collide, which is what keeps warming from teaching the answer.
+    warmup_row = {
+        "text": warmup_query,
+        "positive": True,
+        "chain_query_id": query_id,
+        "expected_memory_id": ids[1],
+    }
     section = [
         f"## {query_id}",
         "",
-        f"**Query:** {query}",
+        f"**Holdout query:** {query}",
+        "",
+        f"**Chained warm-up query:** {warmup_query} (expects `{ids[1]}`)",
         "",
         "**Chain:**",
         "",
@@ -474,24 +514,32 @@ def _chain_rows(index: int, spec: ChainSpec) -> tuple[list[dict[str, Any]], dict
         "---",
         "",
     ]
-    return memories, query_row, section
+    return memories, query_row, warmup_row, section
 
 
-def _build_associative_rows() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+def _build_associative_rows() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     memories: list[dict[str, Any]] = []
     queries: list[dict[str, Any]] = []
+    chain_warmups: list[dict[str, Any]] = []
     sections = [
         "# Synthetic Associative Query Chains",
         "",
         "All organizations, systems, incidents, and values in this dataset are fictional.",
         "",
+        "Each chain carries two questions. The **holdout** query asks about the",
+        "symptom and expects the chain's target; the **chained warm-up** query asks",
+        "about the mechanism and expects the first bridge. The `chained` profile",
+        "replays the warm-up questions so co-retrieval and feedback act on the same",
+        "memories the holdout later needs, without ever surfacing the answer.",
+        "",
     ]
     for index, spec in enumerate(CHAIN_SPECS, 1):
-        chain_memories, query, section = _chain_rows(index, spec)
+        chain_memories, query, warmup_row, section = _chain_rows(index, spec)
         memories.extend(chain_memories)
         queries.append(query)
+        chain_warmups.append(warmup_row)
         sections.extend(section)
-    return memories, queries, sections
+    return memories, queries, chain_warmups, sections
 
 
 def _build_direct_rows(start: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -587,7 +635,34 @@ def _warmup_rows() -> list[dict[str, Any]]:
 
 
 def build_full() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], str]:
-    memories, associative_queries, sections = _build_associative_rows()
+    memories, queries, schedule, warmup, _chained, sections = _build_profiles()
+    return memories, queries, schedule, warmup, sections
+
+
+def build_chained() -> tuple[
+    list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], str
+]:
+    """The full corpus with warm-up questions that traverse the holdout's chains.
+
+    Identical memories, schedule, and holdout queries; only the warm-up differs.
+    That keeps `full` frozen — its fingerprint anchors every promoted record —
+    while giving co-retrieval and feedback a warm-up they can actually act on.
+    """
+    memories, queries, schedule, warmup, chained, sections = _build_profiles()
+    # Keep one negative event so negative feedback stays exercised.
+    negative = [row for row in warmup if not row["positive"]]
+    return memories, queries, schedule, chained + negative, sections
+
+
+def _build_profiles() -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    str,
+]:
+    memories, associative_queries, chained_warmup, sections = _build_associative_rows()
     direct_memories, direct_queries = _build_direct_rows(len(memories) + 1)
     memories.extend(direct_memories)
     _append_background_rows(memories)
@@ -596,7 +671,8 @@ def build_full() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[
     warmup = _warmup_rows()
     expected = (FULL_MEMORY_COUNT, FULL_DIRECT_QUERY_COUNT, FULL_ASSOCIATIVE_QUERY_COUNT)
     _validate_generated(memories, queries, schedule, warmup, expected)
-    return memories, queries, schedule, warmup, "\n".join(sections)
+    _validate_generated(memories, queries, schedule, chained_warmup, expected)
+    return memories, queries, schedule, warmup, chained_warmup, "\n".join(sections)
 
 
 def _validate_generated(
@@ -638,6 +714,30 @@ def _validate_generated(
     holdout = {query["text"].casefold() for query in queries}
     if not warmup or any(row["text"].casefold() in holdout for row in warmup):
         raise RuntimeError("generated warmup must be non-empty and disjoint")
+    _validate_no_leakage(queries, warmup)
+
+
+def _validate_no_leakage(queries: list[dict[str, Any]], warmup: list[dict[str, Any]]) -> None:
+    """Refuse a warm-up event that would hand the holdout its own answer.
+
+    A warm-up may traverse a chain — that is the point of the chained profile —
+    but it must surface a bridge, never the target. Enforced here rather than
+    described in prose, because a benchmark that can be quietly taught the
+    answer reports success it has not earned.
+    """
+    targets = {
+        query["query_id"]: set(query["expected_relevant_node_ids"])
+        for query in queries
+        if query["label"] == "associative"
+    }
+    for row in warmup:
+        chain_query_id = row.get("chain_query_id")
+        if chain_query_id is None:
+            continue
+        if chain_query_id not in targets:
+            raise RuntimeError(f"warmup references an unknown chain: {chain_query_id}")
+        if row.get("expected_memory_id") in targets[chain_query_id]:
+            raise RuntimeError(f"warmup would surface the holdout target for {chain_query_id}")
 
 
 def _jsonl(rows: list[dict[str, Any]]) -> str:
@@ -743,6 +843,10 @@ def _select_smoke_queries(queries: list[dict[str, Any]]) -> list[dict[str, Any]]
 def main() -> None:
     memories, queries, schedule, warmup, chains = build_full()
     _write_profile(ROOT / "full", memories, queries, schedule, warmup, chains)
+    chained_warmup = build_chained()[3]
+    # Same memories, schedule, and holdout as `full`; only the warm-up differs,
+    # so the two profiles stay directly comparable.
+    _write_profile(ROOT / "chained", memories, queries, schedule, chained_warmup, chains)
     smoke_memories = _select_smoke_memories(memories)
     smoke_queries = _select_smoke_queries(queries)
     smoke_schedule = _build_schedule(smoke_memories)

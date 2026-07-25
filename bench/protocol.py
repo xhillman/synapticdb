@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import (
+    MAX_DIVERSITY_PASSES,
     MAX_MEMORY_COUNT,
     MAX_QUERY_COUNT,
     MAX_SEED_COUNT,
@@ -75,6 +76,10 @@ class Measurement:
     before: int
     after: int
     passed: bool
+    # Every reading behind before/after, when a gate takes more than two. The
+    # gate is a verdict; the series is the evidence that distinguishes a value
+    # settling once from one compounding downward.
+    series: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -139,12 +144,15 @@ def run_benchmark(
     expected_baseline_hits: tuple[int, int] | None = None,
     timeline: Timeline = WALL_CLOCK,
     measures: frozenset[str] = frozenset(),
+    diversity_passes: int = 2,
 ) -> BenchmarkReport:
     """Run ingest → warm-up → holdout evaluation for each bounded seed."""
     _validate_run_inputs(dataset, seeds, top_k, required_unique_wins, direct_tolerance, expected_baseline_hits)
     unknown = measures - KNOWN_MEASURES
     if unknown:
         raise ValueError(f"unknown measurement: {sorted(unknown)[0]}")
+    if not 2 <= diversity_passes <= MAX_DIVERSITY_PASSES:
+        raise ValueError(f"diversity passes must be between 2 and {MAX_DIVERSITY_PASSES}")
     executions = tuple(
         _execute_seed(
             dataset,
@@ -157,6 +165,7 @@ def run_benchmark(
             expected_baseline_hits,
             timeline,
             measures,
+            diversity_passes,
         )
         for seed in seeds
     )
@@ -192,6 +201,7 @@ def _execute_seed(
     expected_baseline_hits: tuple[int, int] | None,
     timeline: Timeline = WALL_CLOCK,
     measures: frozenset[str] = frozenset(),
+    diversity_passes: int = 2,
 ) -> _Execution:
     started = time.perf_counter()
     with ExitStack() as resources:
@@ -224,6 +234,7 @@ def _execute_seed(
             timeline=timeline,
             measures=measures,
             cold_associative_hits=cold,
+            diversity_passes=diversity_passes,
         )
         result = _score(
             dataset,
@@ -381,19 +392,19 @@ def _measure(
     timeline: Timeline,
     measures: frozenset[str],
     cold_associative_hits: int | None,
+    diversity_passes: int,
 ) -> tuple[Measurement, ...]:
     """Run the requested directional gates against the warmed candidate."""
     measurements: list[Measurement] = []
     if "trajectory" in measures and cold_associative_hits is not None:
         warm = _associative_hits(dataset, warm_results, top_k)
-        measurements.append(
-            Measurement("trajectory", cold_associative_hits, warm, warm >= cold_associative_hits)
-        )
+        measurements.append(Measurement("trajectory", cold_associative_hits, warm, warm >= cold_associative_hits))
     if "diversity" in measures:
-        repeat = [candidate.recall(query.text, top_k=top_k) for query in dataset.queries]
-        before = _distinct_memories(warm_results, top_k)
-        after = _distinct_memories(repeat, top_k)
-        measurements.append(Measurement("diversity", before, after, after >= before))
+        series = [_distinct_memories(warm_results, top_k)]
+        for _ in range(diversity_passes - 1):
+            repeat = [candidate.recall(query.text, top_k=top_k) for query in dataset.queries]
+            series.append(_distinct_memories(repeat, top_k))
+        measurements.append(Measurement("diversity", series[0], series[-1], series[-1] >= series[0], tuple(series)))
     if "decay" in measures and timeline.decay_probe_days:
         _advance(
             candidate,
@@ -493,11 +504,19 @@ def _git_commit() -> str | None:
     try:
         revision = subprocess.run(
             ("git", "rev-parse", "HEAD"),
-            capture_output=True, text=True, timeout=5.0, check=False, cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            check=False,
+            cwd=cwd,
         )
         status = subprocess.run(
             ("git", "status", "--porcelain"),
-            capture_output=True, text=True, timeout=5.0, check=False, cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            check=False,
+            cwd=cwd,
         )
     except OSError:
         return None

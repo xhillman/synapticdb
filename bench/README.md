@@ -91,6 +91,29 @@ warm-up that traverses the same chains as the holdout, which needs the
 multi-query chains of Phase B. What Phase A adds is the ability to age a graph
 and to detect a collapse.
 
+## The chained profile
+
+`bench/data/chained/` is the full corpus with a warm-up that traverses the
+holdout's own chains — 25 questions, one per chain, each asking about a chain's
+*mechanism* and expecting its first bridge. It exists because `full`'s warm-up
+is disjoint from the holdout, which left co-retrieval and feedback unmeasurable
+for three phases.
+
+```bash
+python -m bench --profile chained --retriever synaptic \
+  --warmup-span-days 30 --query-offset-days 7 --measure trajectory
+```
+
+It reuses `full`'s memories, schedule, and holdout queries verbatim, so the two
+are directly comparable and `full` stays frozen as the locked reproduction.
+
+**The leakage rule is enforced, not merely documented.** Each warm-up event
+declares the chain it touches and the memory it should surface; both the
+generator and the loader refuse a dataset where that memory is the chain's
+target, or where a warm-up repeats a holdout question. A benchmark that can be
+quietly taught the answer reports success it has not earned, so the constraint
+lives in code that fails rather than prose that persuades.
+
 **Nor can it measure maintenance and pruning (PRD §6.5).** Maintenance triggers
 on `remember`, and the harness performs every remember during ingest, before
 anything has aged — so a pass fires five times on the full profile and deletes

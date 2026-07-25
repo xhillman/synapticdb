@@ -57,6 +57,11 @@ class QueryRecord:
 class WarmupEvent:
     text: str
     positive: bool
+    # Set when the event deliberately traverses a holdout chain. The declared
+    # memory must be a bridge, never that chain's target — enforced in
+    # _validate, so a hand-edited fixture cannot teach the benchmark its answer.
+    chain_query_id: str | None = None
+    expected_memory_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -182,9 +187,15 @@ def _warmup(row: dict[str, Any], index: int) -> WarmupEvent:
     positive = row.get("positive")
     if not isinstance(positive, bool):
         raise DatasetError(f"warmup row {index} requires boolean positive")
+    chain_query_id = row.get("chain_query_id")
+    expected_memory_id = row.get("expected_memory_id")
+    if (chain_query_id is None) != (expected_memory_id is None):
+        raise DatasetError(f"warmup row {index} needs both chain_query_id and expected_memory_id")
     return WarmupEvent(
         text=_text(row, "text", "warmup", index),
         positive=positive,
+        chain_query_id=chain_query_id,
+        expected_memory_id=expected_memory_id,
     )
 
 
@@ -228,6 +239,29 @@ def _validate(
     holdout_texts = {query.text.casefold() for query in queries}
     if any(event.text.casefold() in holdout_texts for event in warmup):
         raise DatasetError("warmup and holdout query texts must be disjoint")
+    _validate_no_leakage(queries, warmup, known)
+
+
+def _validate_no_leakage(
+    queries: tuple[QueryRecord, ...],
+    warmup: tuple[WarmupEvent, ...],
+    known: set[str],
+) -> None:
+    """A chain-traversing warm-up must surface a bridge, never the target.
+
+    The generator enforces this too. Checking it again on load means a
+    hand-edited fixture cannot slip a leaked answer past the harness.
+    """
+    targets = {query.query_id: set(query.expected_ids) for query in queries}
+    for event in warmup:
+        if event.chain_query_id is None:
+            continue
+        if event.chain_query_id not in targets:
+            raise DatasetError(f"warmup references unknown chain {event.chain_query_id}")
+        if event.expected_memory_id not in known:
+            raise DatasetError(f"warmup references unknown memory {event.expected_memory_id}")
+        if event.expected_memory_id in targets[event.chain_query_id]:
+            raise DatasetError(f"warmup would surface the holdout target for {event.chain_query_id}")
 
 
 def _fingerprint(root: Path, include_warmup: bool) -> str:

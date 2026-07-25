@@ -25,15 +25,18 @@ def _render_measurements(report: BenchmarkReport) -> list[str]:
     if not any(run.measurements for run in report.runs):
         return []
     lines = [
-        "| Seed | Measurement | Before | After | Gate | Claim |",
-        "|---:|---|---:|---:|---|---|",
+        "| Seed | Measurement | Before | After | Series | Gate | Claim |",
+        "|---:|---|---:|---:|---|---|---|",
     ]
     for run in report.runs:
         for measurement in run.measurements:
             claim = _MEASUREMENT_CLAIMS.get(measurement.name, "")
+            # The series separates a value that settles once from one that
+            # keeps falling; the gate alone cannot tell them apart.
+            series = " → ".join(str(value) for value in measurement.series) if measurement.series else "—"
             lines.append(
                 f"| {run.seed} | {measurement.name} | {measurement.before} | {measurement.after} | "
-                f"{'PASS' if measurement.passed else 'FAIL'} | {claim} |"
+                f"{series} | {'PASS' if measurement.passed else 'FAIL'} | {claim} |"
             )
     lines.append("")
     return lines

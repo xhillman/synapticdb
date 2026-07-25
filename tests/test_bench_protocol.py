@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from bench.contracts import MAX_SEED_COUNT, MAX_SIMULATED_DAYS
+from bench.contracts import MAX_DIVERSITY_PASSES, MAX_SEED_COUNT, MAX_SIMULATED_DAYS
 from bench.dataset import BenchmarkDataset, MemoryRecord, load_dataset
 from bench.protocol import Timeline, run_benchmark
 from bench.reporting import render_markdown, write_report
@@ -129,6 +129,79 @@ def test_trajectory_gate_fails_when_warming_loses_a_hit() -> None:
     assert (trajectory.before, trajectory.after) == (1, 0)
     assert not trajectory.passed
     assert not report.passed
+
+
+class NarrowingRetriever(ScriptedRetriever):
+    """Returns fewer distinct memories over time: forever, or once then steady."""
+
+    def __init__(self, name: str, pool: Sequence[str], *, compounding: bool) -> None:
+        super().__init__(name, {})
+        self.pool = list(pool)
+        self.compounding = compounding
+        self._seen: dict[str, int] = {}
+
+    def recall(self, text: str, *, top_k: int) -> Retrieval:
+        # How many times this query has come round is the pass index. Counting
+        # repeats per text rather than tracking a first query keeps warm-up
+        # events, which never repeat, from being mistaken for a pass boundary.
+        self._seen[text] = self._seen.get(text, 0) + 1
+        passes = self._seen[text] - 1
+        narrowed = passes if self.compounding else min(passes, 1)
+        width = max(1, len(self.pool) - narrowed)
+        return Retrieval(tuple(self.pool[:width])[:top_k])
+
+
+def _diversity_series(compounding: bool, passes: int) -> tuple[int, ...]:
+    dataset = _smoke()
+    # Smaller than top_k, so narrowing is visible rather than clipped by it.
+    pool = [f"mem-{index:04d}" for index in range(1, 9)]
+    report = run_benchmark(
+        dataset,
+        baseline_factory=lambda: ScriptedRetriever("baseline", {}),
+        candidate_factory=lambda: NarrowingRetriever("candidate", pool, compounding=compounding),
+        required_unique_wins=0,
+        measures=frozenset({"diversity"}),
+        diversity_passes=passes,
+    )
+    return report.runs[0].measurements[0].series
+
+
+def test_diversity_series_separates_compounding_from_settling() -> None:
+    compounding = _diversity_series(compounding=True, passes=4)
+    settling = _diversity_series(compounding=False, passes=4)
+
+    # Both fail the gate. The gate alone cannot tell them apart, which is why
+    # the series exists: one keeps falling, the other stops.
+    assert compounding[-1] < compounding[0]
+    assert settling[-1] < settling[0]
+    assert len(set(compounding)) == len(compounding)
+    assert settling[1] == settling[-1]
+
+
+def test_diversity_defaults_to_the_original_two_pass_probe() -> None:
+    dataset = _smoke()
+    report = run_benchmark(
+        dataset,
+        baseline_factory=FixtureRetriever,
+        candidate_factory=FixtureRetriever,
+        required_unique_wins=0,
+        measures=frozenset({"diversity"}),
+    )
+    measurement = report.runs[0].measurements[0]
+    assert len(measurement.series) == 2
+    assert (measurement.before, measurement.after) == (measurement.series[0], measurement.series[-1])
+
+
+@pytest.mark.parametrize("passes", [1, 0, MAX_DIVERSITY_PASSES + 1])
+def test_diversity_passes_are_bounded(passes: int) -> None:
+    with pytest.raises(ValueError, match="diversity passes"):
+        run_benchmark(
+            _smoke(),
+            baseline_factory=FixtureRetriever,
+            candidate_factory=FixtureRetriever,
+            required_unique_wins=0,
+            diversity_passes=passes,
+        )
 
 
 def test_measurement_rejects_an_unknown_name() -> None:

@@ -23,7 +23,9 @@ MAX_PARAM_OVERRIDES = 17
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=("smoke", "full"), default="full")
+    # "chained" is the full corpus with warm-up questions that traverse the
+    # holdout chains; "full" stays frozen as the locked reproduction.
+    parser.add_argument("--profile", choices=("smoke", "full", "chained"), default="full")
     parser.add_argument("--retriever", choices=("fixture", "baseline", "synaptic"), default="baseline")
     parser.add_argument("--seeds", default="1337", help="Comma-separated deterministic seeds")
     parser.add_argument("--top-k", type=int, default=10)
@@ -57,6 +59,12 @@ def parse_args() -> argparse.Namespace:
         default=[],
         choices=sorted(KNOWN_MEASURES),
         help="Run a directional gate; repeatable",
+    )
+    parser.add_argument(
+        "--diversity-passes",
+        type=int,
+        default=2,
+        help="Holdout replays behind the diversity gate (2 reproduces the original probe)",
     )
     return parser.parse_args()
 
@@ -101,7 +109,7 @@ def main() -> int:
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     if not 1 <= args.top_k <= MAX_TOP_K:
         raise ValueError(f"--top-k must be between 1 and {MAX_TOP_K}")
-    if args.profile == "full" and args.top_k != 10:
+    if args.profile in ("full", "chained") and args.top_k != 10:
         raise ValueError("the locked full-profile reproduction requires --top-k 10")
     seeds = _parse_seeds(args.seeds)
     expected = (50, 5, 5) if args.profile == "smoke" else (500, 25, 25)
@@ -145,10 +153,13 @@ def main() -> int:
         candidate_factory=candidate_factory,
         seeds=seeds,
         top_k=args.top_k,
-        required_unique_wins=10 if args.profile == "full" and args.retriever != "baseline" else 0,
-        expected_baseline_hits=(25, 10) if args.profile == "full" else None,
+        required_unique_wins=10 if args.profile in ("full", "chained") and args.retriever != "baseline" else 0,
+        # The chained profile shares full's corpus and holdout, so the locked
+        # baseline reproduction target applies to it unchanged.
+        expected_baseline_hits=(25, 10) if args.profile in ("full", "chained") else None,
         timeline=Timeline(args.warmup_span_days, args.query_offset_days, args.decay_probe_days),
         measures=frozenset(args.measure),
+        diversity_passes=args.diversity_passes,
     )
     print(render_markdown(report))
     if not args.no_write:

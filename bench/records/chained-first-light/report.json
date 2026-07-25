@@ -1,0 +1,616 @@
+{
+  "associative_total": 25,
+  "baseline_config": {
+    "bm25_b": 0.75,
+    "bm25_k1": 1.2,
+    "cross_encoder_model_name": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    "cross_encoder_revision": "c5ee24cb16019beea0893ab7796b1df96625c6b8",
+    "cross_encoder_weight": 0.6,
+    "embedding_max_features": 4096,
+    "final_top_k": 10,
+    "fusion_k": 60,
+    "fusion_weight": 0.05,
+    "keyword_top_k": 40,
+    "keyword_weight": 0.2,
+    "semantic_top_k": 40,
+    "semantic_weight": 0.15
+  },
+  "baseline_name": "baseline",
+  "candidate_config": {
+    "embedding": "default",
+    "params": {
+      "activation_blend_weight": 0.45,
+      "activation_decay": 0.2,
+      "activation_max_steps": 5,
+      "activation_min_energy": 0.05,
+      "activation_seeds": 5,
+      "candidate_depth": 40,
+      "co_retrieval": [
+        0.05,
+        0.05
+      ],
+      "connect_weight": 0.5,
+      "decay_and_prune": [
+        30,
+        0.02
+      ],
+      "feedback_rate": 0.15,
+      "hop_bonus": 0.15,
+      "maintenance_interval": 100,
+      "rrf_k": 60,
+      "seed_penalty": 0.2,
+      "semantic_seed": null,
+      "temporal_link": [
+        600,
+        3,
+        0.2
+      ],
+      "top_k": 10
+    }
+  },
+  "candidate_name": "synaptic",
+  "dataset_fingerprint": "963fedf14b723814e7f98d5189d613edbf54cfafc7aa7a8fb713c72eceab2779",
+  "direct_tolerance": 0.05,
+  "direct_total": 25,
+  "environment": {
+    "commit": "eef323b46f60a6ce7ca0152fde1f3461c52a095e-dirty",
+    "faiss-cpu": "1.14.3",
+    "numpy": "2.4.6",
+    "platform": "macOS-26.0-arm64-arm-64bit",
+    "python": "3.11.4",
+    "rank-bm25": "0.2.2",
+    "scikit-learn": "1.9.0",
+    "sentence-transformers": "3.4.1",
+    "torch": "2.3.1",
+    "transformers": "4.41.2"
+  },
+  "expected_baseline_hits": [
+    25,
+    10
+  ],
+  "passed": false,
+  "required_unique_wins": 10,
+  "runs": [
+    {
+      "associative_unique_wins": 7,
+      "baseline_associative_hits": 10,
+      "baseline_direct_hits": 25,
+      "baseline_reproduced": true,
+      "candidate_associative_hits": 17,
+      "candidate_direct_hits": 25,
+      "direct_parity": true,
+      "elapsed_seconds": 35.08777166670188,
+      "measurements": [
+        {
+          "after": 17,
+          "before": 17,
+          "name": "trajectory",
+          "passed": true,
+          "series": []
+        },
+        {
+          "after": 189,
+          "before": 193,
+          "name": "diversity",
+          "passed": false,
+          "series": [
+            193,
+            192,
+            188,
+            189
+          ]
+        }
+      ],
+      "passed": false,
+      "queries": [
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-001",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-002",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-003",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-004",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-005",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-006",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-007",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-008",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-009",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-010",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-011",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-012",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-013",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-014",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-015",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-016",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-017",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-018",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-019",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-020",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-021",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-022",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-023",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-024",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 1,
+          "candidate_hit": true,
+          "candidate_rank": 1,
+          "label": "direct",
+          "path_present": false,
+          "query_id": "Q-025",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": false,
+          "baseline_rank": null,
+          "candidate_hit": false,
+          "candidate_rank": null,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-026",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": false,
+          "baseline_rank": null,
+          "candidate_hit": true,
+          "candidate_rank": 4,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-027",
+          "unique_win": true
+        },
+        {
+          "baseline_hit": false,
+          "baseline_rank": null,
+          "candidate_hit": false,
+          "candidate_rank": null,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-028",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": false,
+          "baseline_rank": null,
+          "candidate_hit": true,
+          "candidate_rank": 6,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-029",
+          "unique_win": true
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 9,
+          "candidate_hit": true,
+          "candidate_rank": 5,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-030",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": false,
+          "baseline_rank": null,
+          "candidate_hit": true,
+          "candidate_rank": 8,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-031",
+          "unique_win": true
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 2,
+          "candidate_hit": true,
+          "candidate_rank": 2,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-032",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": false,
+          "baseline_rank": null,
+          "candidate_hit": true,
+          "candidate_rank": 10,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-033",
+          "unique_win": true
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 3,
+          "candidate_hit": true,
+          "candidate_rank": 2,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-034",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 3,
+          "candidate_hit": true,
+          "candidate_rank": 4,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-035",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 2,
+          "candidate_hit": true,
+          "candidate_rank": 2,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-036",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": false,
+          "baseline_rank": null,
+          "candidate_hit": false,
+          "candidate_rank": null,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-037",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 3,
+          "candidate_hit": true,
+          "candidate_rank": 3,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-038",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 10,
+          "candidate_hit": true,
+          "candidate_rank": 2,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-039",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": false,
+          "baseline_rank": null,
+          "candidate_hit": false,
+          "candidate_rank": null,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-040",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": false,
+          "baseline_rank": null,
+          "candidate_hit": true,
+          "candidate_rank": 8,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-041",
+          "unique_win": true
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 2,
+          "candidate_hit": true,
+          "candidate_rank": 2,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-042",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": false,
+          "baseline_rank": null,
+          "candidate_hit": false,
+          "candidate_rank": null,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-043",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": false,
+          "baseline_rank": null,
+          "candidate_hit": true,
+          "candidate_rank": 7,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-044",
+          "unique_win": true
+        },
+        {
+          "baseline_hit": false,
+          "baseline_rank": null,
+          "candidate_hit": true,
+          "candidate_rank": 3,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-045",
+          "unique_win": true
+        },
+        {
+          "baseline_hit": false,
+          "baseline_rank": null,
+          "candidate_hit": false,
+          "candidate_rank": null,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-046",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 3,
+          "candidate_hit": true,
+          "candidate_rank": 2,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-047",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": false,
+          "baseline_rank": null,
+          "candidate_hit": false,
+          "candidate_rank": null,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-048",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": true,
+          "baseline_rank": 7,
+          "candidate_hit": true,
+          "candidate_rank": 4,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-049",
+          "unique_win": false
+        },
+        {
+          "baseline_hit": false,
+          "baseline_rank": null,
+          "candidate_hit": false,
+          "candidate_rank": null,
+          "label": "associative",
+          "path_present": true,
+          "query_id": "Q-050",
+          "unique_win": false
+        }
+      ],
+      "seed": 1337
+    }
+  ],
+  "timeline": {
+    "decay_probe_days": 0.0,
+    "query_offset_days": 7.0,
+    "warmup_span_days": 30.0
+  },
+  "top_k": 10
+}
