@@ -76,6 +76,50 @@ def test_blend_combines_sources_and_attributes_membership() -> None:
     ]
 
 
+def test_seeds_are_excluded_from_the_discovery_scale() -> None:
+    seed, near, far = uuid4(), uuid4(), uuid4()
+    # The seed holds full energy, so leaving it in the distribution pins the
+    # scale at 1.0 and compresses both discoveries toward zero.
+    activation = {seed: 1.0, near: 0.2, far: 0.1}
+
+    with_seed = {hit.memory_id: hit.score for hit in blend_rankings({}, activation, 1.0, 1.0)}
+    without_seed = {hit.memory_id: hit.score for hit in blend_rankings({}, activation, 1.0, 1.0, seed_ids=(seed,))}
+
+    assert with_seed[near] == pytest.approx(0.1111, abs=1e-3)
+    # The strongest discovery now reaches the top of the scale.
+    assert without_seed[near] == pytest.approx(1.0)
+    assert without_seed[far] == pytest.approx(0.0)
+
+
+def test_an_excluded_seed_keeps_its_search_attribution() -> None:
+    seed, discovery = uuid4(), uuid4()
+
+    blended = blend_rankings(
+        {seed: 1.0},
+        {seed: 1.0, discovery: 0.5},
+        1.0,
+        0.45,
+        seed_ids=(seed,),
+    )
+    attribution = {hit.memory_id: hit.via for hit in blended}
+
+    # A seed came from search; only a memory the graph reached on its own is
+    # attributed to association.
+    assert attribution[seed] == "search"
+    assert attribution[discovery] == "association"
+
+
+def test_a_lone_discovery_reaches_the_top_of_the_scale() -> None:
+    seed, discovery = uuid4(), uuid4()
+
+    blended = blend_rankings({seed: 1.0}, {seed: 1.0, discovery: 0.3}, 1.0, 1.0, seed_ids=(seed,))
+    scores = {hit.memory_id: hit.score for hit in blended}
+
+    # One discovery is an equal band, which min_max_normalize treats as fully
+    # relevant, so at alpha 1.0 it ties the best search result.
+    assert scores[discovery] == pytest.approx(1.0)
+
+
 def test_blend_weight_scales_the_activation_share() -> None:
     search, both, association = uuid4(), uuid4(), uuid4()
     scores = ({search: 2.0, both: 1.0}, {both: 1.0, association: 2.0})

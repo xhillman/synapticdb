@@ -233,7 +233,13 @@ class Synaptic:
             spreading,
         )
         activation_scores = {hit.memory_id: hit.score for hit in activation.hits}
-        ranked = blend_rankings(fused_scores, activation_scores, maturity, blend_weight(self._params))
+        ranked = blend_rankings(
+            fused_scores,
+            activation_scores,
+            maturity,
+            blend_weight(self._params),
+            seed_ids=tuple(memory_id for memory_id, _ in seeds),
+        )
         return ranked, activation, maturity
 
     def _activation_neighbors_at(self, now: datetime, memory_id: UUID) -> tuple[Neighbor, ...]:

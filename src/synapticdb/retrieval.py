@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -86,19 +86,30 @@ def blend_rankings(
     activation_scores: Mapping[UUID, float],
     confidence: float,
     blend_weight: float = ACTIVATION_BLEND_WEIGHT,
+    seed_ids: Collection[UUID] = (),
 ) -> tuple[BlendedHit, ...]:
     """Blend normalized source scores and attribute each result.
 
     `blend_weight` is the alpha ceiling from PRD §5.3: the share of the final
     score activation can claim at full graph confidence. Actual alpha scales it
     by maturity, so a cold graph degrades to pure hybrid search.
+
+    `seed_ids` are the fusion results activation started from. They are dropped
+    before normalizing, because a seed is not a discovery: it holds full seed
+    energy by construction, so leaving it in the distribution pins the scale at
+    its value and compresses every genuine discovery toward zero. A seed keeps
+    its fusion score and is attributed to search, which is where it came from.
     """
     maturity = _unit_float(confidence, "graph confidence")
     weight = _unit_float(blend_weight, "activation blend weight")
     normalized_fusion = min_max_normalize(fusion_scores)
     if maturity == 0.0 or weight == 0.0:
         return tuple(BlendedHit(memory_id, score, "search") for memory_id, score in normalized_fusion.items())
-    normalized_activation = min_max_normalize(activation_scores)
+    seeds = frozenset(seed_ids)
+    discovered = {
+        memory_id: score for memory_id, score in activation_scores.items() if memory_id not in seeds
+    }
+    normalized_activation = min_max_normalize(discovered)
     alpha = weight * maturity
     ordered_ids = tuple(dict.fromkeys((*normalized_fusion, *normalized_activation)))
     blended = [
