@@ -76,7 +76,44 @@ def test_blend_combines_sources_and_attributes_membership() -> None:
     ]
 
 
+def test_blend_weight_scales_the_activation_share() -> None:
+    search, both, association = uuid4(), uuid4(), uuid4()
+    scores = ({search: 2.0, both: 1.0}, {both: 1.0, association: 2.0})
+
+    # Alpha is blend_weight * confidence, so halving the weight at full
+    # confidence gives the same ranking as half the confidence would.
+    halved = blend_rankings(*scores, 1.0, 0.225)
+    lower_confidence = blend_rankings(*scores, 0.5, 0.45)
+    assert [(hit.memory_id, hit.score) for hit in halved] == pytest.approx(
+        [(hit.memory_id, hit.score) for hit in lower_confidence]
+    )
+
+
+def test_blend_weight_of_zero_is_pure_fusion_even_at_full_confidence() -> None:
+    first, second, association = uuid4(), uuid4(), uuid4()
+
+    blended = blend_rankings(
+        {first: 2.0, second: 1.0},
+        {second: 0.5, association: 1.0},
+        1.0,
+        0.0,
+    )
+
+    # A swept weight of zero must also drop the association attribution, not
+    # merely zero its contribution to the score.
+    assert [(hit.memory_id, hit.score, hit.via) for hit in blended] == [
+        (first, 1.0, "search"),
+        (second, 0.0, "search"),
+    ]
+
+
 @pytest.mark.parametrize("confidence", [-0.1, 1.1, float("nan")])
 def test_blend_rejects_invalid_confidence(confidence: float) -> None:
     with pytest.raises(InvalidArgumentError, match="graph confidence"):
         blend_rankings({}, {}, confidence)
+
+
+@pytest.mark.parametrize("weight", [-0.1, 1.1, float("nan")])
+def test_blend_rejects_an_invalid_weight(weight: float) -> None:
+    with pytest.raises(InvalidArgumentError, match="blend weight"):
+        blend_rankings({}, {}, 1.0, weight)

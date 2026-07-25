@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
@@ -13,7 +13,18 @@ from uuid import UUID
 
 from synapticdb import Synaptic
 from synapticdb.embeddings import EmbeddingFunction
-from synapticdb.learning import semantic_seed_config, temporal_link_config
+from synapticdb.learning import (
+    ParameterValue,
+    activation_config,
+    blend_weight,
+    co_retrieval_config,
+    connect_weight,
+    decay_config,
+    feedback_rate,
+    fusion_config,
+    semantic_seed_config,
+    temporal_link_config,
+)
 
 from .contracts import MAX_FIXTURE_DIMENSIONS, MAX_MEMORY_COUNT, MAX_RECORD_CHARS, MAX_TOP_K
 from .dataset import MemoryRecord
@@ -86,15 +97,15 @@ class FixtureRetriever:
 
 @dataclass(frozen=True)
 class SynapticConfig:
+    """The full effective parameter set behind one benchmark run.
+
+    Records every PRD §9 group rather than a hand-picked few, so a promoted
+    record states exactly the configuration that produced it and a calibration
+    sweep cannot be misread as a default-configuration result.
+    """
+
     embedding: str
-    activation_blend_weight: float = 0.45
-    # None when semantic seeding is disabled (the shipped default).
-    semantic_seed_threshold: float | None = None
-    semantic_seed_max_links: int | None = None
-    semantic_seed_weight: float | None = None
-    temporal_window_seconds: int = 600
-    temporal_max_links: int = 3
-    temporal_weight: float = 0.2
+    params: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -112,6 +123,7 @@ class SynapticRetriever:
         embedding_name: str = "default",
         semantic_seed: tuple[float, int, float] | None = None,
         temporal_link: tuple[int, int, float] | None = None,
+        overrides: Mapping[str, ParameterValue] | None = None,
     ) -> None:
         if not embedding_name:
             raise ValueError("embedding_name must be non-empty")
@@ -120,16 +132,16 @@ class SynapticRetriever:
             self._memory._params["semantic_seed"] = semantic_seed
         if temporal_link is not None:
             self._memory._params["temporal_link"] = temporal_link
-        semantic = semantic_seed_config(self._memory._params)
-        temporal = temporal_link_config(self._memory._params)
+        for key, value in (overrides or {}).items():
+            if key not in self._memory._params:
+                raise ValueError(f"unknown parameter: {key}")
+            self._memory._params[key] = value
+        # Read every group once, so a malformed override fails here rather than
+        # midway through a benchmark run.
+        _validate_parameters(self._memory._params)
         self.config = SynapticConfig(
             embedding=embedding_name,
-            semantic_seed_threshold=None if semantic is None else semantic.threshold,
-            semantic_seed_max_links=None if semantic is None else semantic.max_links,
-            semantic_seed_weight=None if semantic is None else semantic.initial_weight,
-            temporal_window_seconds=temporal.window_seconds,
-            temporal_max_links=temporal.max_links,
-            temporal_weight=temporal.initial_weight,
+            params={key: _json_value(value) for key, value in sorted(self._memory._params.items())},
         )
         self._benchmark_ids: dict[UUID, str] = {}
         self._ingested = False
@@ -194,6 +206,24 @@ class SynapticRetriever:
 
     def close(self) -> None:
         self._memory.close()
+
+
+def _validate_parameters(params: Mapping[str, ParameterValue]) -> None:
+    """Read every parameter group so a bad override fails before ingest."""
+    semantic_seed_config(params)
+    temporal_link_config(params)
+    fusion_config(params)
+    activation_config(params)
+    blend_weight(params)
+    co_retrieval_config(params)
+    feedback_rate(params)
+    connect_weight(params)
+    decay_config(params)
+
+
+def _json_value(value: ParameterValue) -> Any:
+    """Render one parameter for the report; tuples become JSON arrays."""
+    return list(value) if isinstance(value, tuple) else value
 
 
 def _fixture_embedding(text: str, dimensions: int = 128) -> tuple[float, ...]:

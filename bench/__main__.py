@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
+
+from synapticdb.learning import ParameterValue, default_parameters
 
 from .baseline import LockedBaseline
 from .contracts import MAX_SEED_COUNT, MAX_SEED_TEXT_CHARS, MAX_TOP_K
@@ -15,6 +18,7 @@ from .reporting import render_markdown, write_report
 from .retrievers import FixtureRetriever, Retriever, SynapticRetriever, _fixture_embedding
 
 ROOT = Path(__file__).resolve().parent
+MAX_PARAM_OVERRIDES = 17
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,7 +39,37 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temporal-window", type=int, default=600)
     parser.add_argument("--temporal-max-links", type=int, default=3)
     parser.add_argument("--temporal-weight", type=float, default=0.2)
+    parser.add_argument(
+        "--param",
+        action="append",
+        default=[],
+        metavar="KEY=JSON",
+        help="Override one PRD section 9 parameter, e.g. --param activation_blend_weight=0.9",
+    )
     return parser.parse_args()
+
+
+def _parse_overrides(entries: Sequence[str]) -> dict[str, ParameterValue]:
+    """Parse repeated KEY=JSON overrides against the known parameter budget."""
+    if len(entries) > MAX_PARAM_OVERRIDES:
+        raise ValueError(f"--param accepts at most {MAX_PARAM_OVERRIDES} overrides")
+    known = default_parameters()
+    overrides: dict[str, ParameterValue] = {}
+    for entry in entries:
+        key, separator, raw = entry.partition("=")
+        if not separator or not key:
+            raise ValueError(f"--param expects KEY=JSON, got: {entry}")
+        if key not in known:
+            raise ValueError(f"unknown parameter: {key}")
+        if key in overrides:
+            raise ValueError(f"parameter repeated: {key}")
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"--param {key} needs a JSON value, got: {raw}") from error
+        # JSON has no tuples, so a group like temporal_link arrives as a list.
+        overrides[key] = tuple(value) if isinstance(value, list) else value
+    return overrides
 
 
 def _parse_seeds(value: str) -> tuple[int, ...]:
@@ -66,6 +100,7 @@ def main() -> int:
         else (args.semantic_threshold, args.semantic_max_links, args.semantic_weight)
     )
     temporal_link = (args.temporal_window, args.temporal_max_links, args.temporal_weight)
+    overrides = _parse_overrides(args.param)
     factories: dict[str, Callable[[], Retriever]] = {
         "fixture": FixtureRetriever,
         "baseline": LockedBaseline,
@@ -76,10 +111,17 @@ def main() -> int:
                     embedding_name="fixture",
                     semantic_seed=semantic_seed,
                     temporal_link=temporal_link,
+                    overrides=overrides,
                 )
             )
             if args.profile == "smoke"
-            else (lambda: SynapticRetriever(semantic_seed=semantic_seed, temporal_link=temporal_link))
+            else (
+                lambda: SynapticRetriever(
+                    semantic_seed=semantic_seed,
+                    temporal_link=temporal_link,
+                    overrides=overrides,
+                )
+            )
         ),
     }
     selected = factories[args.retriever]

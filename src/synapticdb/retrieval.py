@@ -85,14 +85,21 @@ def blend_rankings(
     fusion_scores: Mapping[UUID, float],
     activation_scores: Mapping[UUID, float],
     confidence: float,
+    blend_weight: float = ACTIVATION_BLEND_WEIGHT,
 ) -> tuple[BlendedHit, ...]:
-    """Blend normalized source scores and attribute each result."""
+    """Blend normalized source scores and attribute each result.
+
+    `blend_weight` is the alpha ceiling from PRD §5.3: the share of the final
+    score activation can claim at full graph confidence. Actual alpha scales it
+    by maturity, so a cold graph degrades to pure hybrid search.
+    """
     maturity = _unit_float(confidence, "graph confidence")
+    weight = _unit_float(blend_weight, "activation blend weight")
     normalized_fusion = min_max_normalize(fusion_scores)
-    if maturity == 0.0:
+    if maturity == 0.0 or weight == 0.0:
         return tuple(BlendedHit(memory_id, score, "search") for memory_id, score in normalized_fusion.items())
     normalized_activation = min_max_normalize(activation_scores)
-    alpha = ACTIVATION_BLEND_WEIGHT * maturity
+    alpha = weight * maturity
     ordered_ids = tuple(dict.fromkeys((*normalized_fusion, *normalized_activation)))
     blended = [
         BlendedHit(

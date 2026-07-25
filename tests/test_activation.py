@@ -5,7 +5,17 @@ from uuid import UUID, uuid4
 import pytest
 
 from synapticdb import InvalidArgumentError
-from synapticdb.activation import Neighbor, spread_activation
+from synapticdb.activation import (
+    ACTIVATION_DECAY,
+    ACTIVATION_HOP_BONUS,
+    ACTIVATION_MAX_STEPS,
+    ACTIVATION_MIN_ENERGY,
+    ACTIVATION_SEED_COUNT,
+    ACTIVATION_SEED_PENALTY,
+    ActivationConfig,
+    Neighbor,
+    spread_activation,
+)
 
 
 class Graph:
@@ -106,6 +116,63 @@ def test_activation_rejects_more_than_five_seeds() -> None:
     seeds = tuple((uuid4(), 1.0) for _ in range(6))
     with pytest.raises(InvalidArgumentError, match="at most 5 seeds"):
         spread_activation(seeds, lambda _memory_id: ())
+
+
+def test_activation_defaults_match_the_locked_constants() -> None:
+    config = ActivationConfig()
+    assert config.seeds == ACTIVATION_SEED_COUNT
+    assert config.max_steps == ACTIVATION_MAX_STEPS
+    assert config.decay == ACTIVATION_DECAY
+    assert config.min_energy == ACTIVATION_MIN_ENERGY
+    assert config.hop_bonus == ACTIVATION_HOP_BONUS
+    assert config.seed_penalty == ACTIVATION_SEED_PENALTY
+
+
+def test_min_energy_governs_how_far_energy_travels() -> None:
+    first, second, third = uuid4(), uuid4(), uuid4()
+    graph = Graph(
+        {
+            first: (Neighbor(second, "one", 0.5),),
+            second: (Neighbor(third, "two", 0.5),),
+        }
+    )
+    # Two hops at 0.5 weight: 1.0 -> 0.4 -> 0.16, so a 0.2 floor stops at one.
+    strict = spread_activation(((first, 1.0),), graph.lookup, ActivationConfig(min_energy=0.2))
+    assert {hit.memory_id for hit in strict.hits} == {first, second}
+
+    permissive = spread_activation(((first, 1.0),), graph.lookup, ActivationConfig(min_energy=0.1))
+    assert {hit.memory_id for hit in permissive.hits} == {first, second, third}
+
+
+def test_hop_bonus_and_seed_penalty_are_configurable() -> None:
+    seed, target = uuid4(), uuid4()
+    graph = Graph({seed: (Neighbor(target, "edge", 1.0),)})
+
+    result = spread_activation(
+        ((seed, 1.0),),
+        graph.lookup,
+        ActivationConfig(hop_bonus=0.0, seed_penalty=0.0),
+    )
+    scores = {hit.memory_id: hit.score for hit in result.hits}
+    # Without either adjustment a score is exactly its energy.
+    assert scores[seed] == pytest.approx(1.0)
+    assert scores[target] == pytest.approx(0.8)
+
+
+def test_max_steps_bounds_propagation_depth() -> None:
+    nodes = tuple(uuid4() for _ in range(5))
+    graph = Graph(
+        {source: (Neighbor(target, f"edge-{index}", 1.0),) for index, (source, target) in enumerate(pairwise(nodes))}
+    )
+    result = spread_activation(((nodes[0], 1.0),), graph.lookup, ActivationConfig(max_steps=2))
+    # Two steps reach two nodes beyond the seed and no further.
+    assert {hit.memory_id for hit in result.hits} == set(nodes[:3])
+
+
+def test_seed_count_is_configurable() -> None:
+    seeds = tuple((uuid4(), 1.0) for _ in range(6))
+    result = spread_activation(seeds, lambda _memory_id: (), ActivationConfig(seeds=6))
+    assert len(result.hits) == 6
 
 
 def test_activation_degrades_on_a_dense_hub_instead_of_raising() -> None:

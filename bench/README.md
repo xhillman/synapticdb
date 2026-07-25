@@ -37,6 +37,23 @@ The candidate gate, used once the Synaptic adapter exists, requires direct
 recall within five percentage points of the baseline and at least 10/25
 path-backed associative unique wins on every requested seed.
 
+Override any PRD section 9 parameter with a repeatable `--param KEY=JSON`, and
+sweep one across several values with `bench/sweep.py`:
+
+```bash
+python -m bench --profile full --retriever synaptic --param activation_blend_weight=0.9
+python -m bench.sweep temporal_link '[600,3,0.2]' '[600,3,0.6]'
+```
+
+Every report records the **full effective parameter dict**, so a promoted record
+always names the configuration that produced it.
+
+**Sweeping is bounded evidence.** The holdout is 25 associative queries, and
+tuning hard against it is how a benchmark gets overfit. Prefer one parameter at
+a time, prefer values with a mechanical reason to help, and treat a config that
+scores well without an explanation as a finding to investigate rather than a
+default to adopt.
+
 Canonical results live in `bench/records/`, one directory per promoted run
 (`report.md` + `report.json`, stamped with the git commit of the code under
 test). `bench/artifacts/` is transient and gitignored; promote a run by

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
+from synapticdb.activation import ActivationConfig
 from synapticdb.models import InvalidArgumentError
 
 ParameterValue = float | int | tuple[float | int, ...] | None
@@ -51,6 +52,12 @@ class TemporalLinkConfig:
     window_seconds: int
     max_links: int
     initial_weight: float
+
+
+@dataclass(frozen=True, slots=True)
+class FusionConfig:
+    candidate_depth: int
+    rrf_k: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,18 +141,39 @@ def co_retrieval_config(params: Mapping[str, ParameterValue]) -> CoRetrievalConf
 
 def feedback_rate(params: Mapping[str, ParameterValue]) -> float:
     """Read and validate the explicit feedback rate."""
-    value = params.get("feedback_rate")
-    if isinstance(value, tuple) or value is None:
-        raise InvalidArgumentError("feedback_rate must be a single number")
-    return _unit_float(value, "feedback rate")
+    return _unit_float(_single_value(params, "feedback_rate"), "feedback rate")
+
+
+def fusion_config(params: Mapping[str, ParameterValue]) -> FusionConfig:
+    """Read and validate the candidate depth and RRF constant."""
+    # retrieval._MAX_RANKING_LENGTH rejects a ranking longer than 100, so the
+    # depth is bounded here to fail with a clear message instead of deep inside
+    # reciprocal_rank_fusion.
+    depth = _bounded_int(_single_value(params, "candidate_depth"), "candidate depth", 100)
+    rrf_k = _bounded_int(_single_value(params, "rrf_k"), "rrf k", 10_000)
+    return FusionConfig(depth, rrf_k)
+
+
+def activation_config(params: Mapping[str, ParameterValue]) -> ActivationConfig:
+    """Read and validate the six PRD §5.2 spreading parameters."""
+    return ActivationConfig(
+        seeds=_bounded_int(_single_value(params, "activation_seeds"), "activation seeds", 100),
+        max_steps=_bounded_int(_single_value(params, "activation_max_steps"), "activation max steps", 20),
+        decay=_unit_float(_single_value(params, "activation_decay"), "activation decay"),
+        min_energy=_unit_float(_single_value(params, "activation_min_energy"), "activation min energy"),
+        hop_bonus=_unit_float(_single_value(params, "hop_bonus"), "hop bonus"),
+        seed_penalty=_unit_float(_single_value(params, "seed_penalty"), "seed penalty"),
+    )
+
+
+def blend_weight(params: Mapping[str, ParameterValue]) -> float:
+    """Read and validate the alpha ceiling applied to activation (PRD §5.3)."""
+    return _unit_float(_single_value(params, "activation_blend_weight"), "activation blend weight")
 
 
 def connect_weight(params: Mapping[str, ParameterValue]) -> float:
     """Read and validate the weight an explicit connect asserts."""
-    value = params.get("connect_weight")
-    if isinstance(value, tuple) or value is None:
-        raise InvalidArgumentError("connect_weight must be a single number")
-    return _unit_float(value, "connect weight")
+    return _unit_float(_single_value(params, "connect_weight"), "connect weight")
 
 
 def passive_reinforcement_rate(params: Mapping[str, ParameterValue]) -> float:
@@ -273,6 +301,14 @@ def effective_weight(
     read_time = _utc_datetime(now, "now")
     days_elapsed = (read_time - reinforced).total_seconds() / _SECONDS_PER_DAY
     return decayed_weight(weight, days_elapsed, half_life_days)
+
+
+def _single_value(params: Mapping[str, ParameterValue], key: str) -> float | int:
+    """Read one scalar parameter group, rejecting a tuple or a missing entry."""
+    value = params.get(key)
+    if value is None or isinstance(value, tuple):
+        raise InvalidArgumentError(f"{key} must be a single number")
+    return value
 
 
 def _bounded_int(value: float | int, label: str, maximum: int) -> int:

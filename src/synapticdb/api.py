@@ -12,22 +12,20 @@ from pathlib import Path
 from types import TracebackType
 from uuid import UUID
 
-from synapticdb.activation import (
-    ACTIVATION_SEED_COUNT,
-    ActivationResult,
-    Neighbor,
-    spread_activation,
-)
+from synapticdb.activation import ActivationResult, Neighbor, spread_activation
 from synapticdb.confidence import ConfidenceCache, GraphMetrics
 from synapticdb.embeddings import Embedder, EmbeddingFunction
 from synapticdb.learning import (
     ParameterValue,
+    activation_config,
+    blend_weight,
     co_retrieval_config,
     co_retrieval_pairs,
     connect_weight,
     decay_config,
     default_parameters,
     feedback_rate,
+    fusion_config,
     negative_feedback_weight,
     passive_reinforcement_rate,
     positive_feedback_seed,
@@ -44,7 +42,6 @@ from synapticdb.retrieval import (
     reciprocal_rank_fusion,
 )
 from synapticdb.store import (
-    CANDIDATE_LIMIT,
     Edge,
     EdgeSeed,
     GraphSummary,
@@ -213,24 +210,30 @@ class Synaptic:
         embedding: Sequence[float],
         now: datetime,
     ) -> tuple[tuple[BlendedHit, ...], ActivationResult, float]:
-        keyword = self._store.keyword_search(text, limit=CANDIDATE_LIMIT)
-        semantic = self._store.semantic_search(embedding, limit=CANDIDATE_LIMIT)
+        fusion = fusion_config(self._params)
+        spreading = activation_config(self._params)
+        keyword = self._store.keyword_search(text, limit=fusion.candidate_depth)
+        semantic = self._store.semantic_search(embedding, limit=fusion.candidate_depth)
         fused = reciprocal_rank_fusion(
             (
                 tuple(hit.memory_id for hit in keyword),
                 tuple(hit.memory_id for hit in semantic),
-            )
+            ),
+            k=fusion.rrf_k,
         )
         fused_scores = min_max_normalize({hit.memory_id: hit.score for hit in fused})
         summary = self._store.graph_summary(half_life_days=self._half_life_days(), now=now)
         maturity = self._maturity(summary)
         seeds = tuple(
-            (hit.memory_id, fused_scores[hit.memory_id])
-            for hit in fused[:ACTIVATION_SEED_COUNT]
+            (hit.memory_id, fused_scores[hit.memory_id]) for hit in fused[: spreading.seeds]
         )
-        activation = spread_activation(seeds, partial(self._activation_neighbors_at, now))
+        activation = spread_activation(
+            seeds,
+            partial(self._activation_neighbors_at, now),
+            spreading,
+        )
         activation_scores = {hit.memory_id: hit.score for hit in activation.hits}
-        ranked = blend_rankings(fused_scores, activation_scores, maturity)
+        ranked = blend_rankings(fused_scores, activation_scores, maturity, blend_weight(self._params))
         return ranked, activation, maturity
 
     def _activation_neighbors_at(self, now: datetime, memory_id: UUID) -> tuple[Neighbor, ...]:

@@ -20,6 +20,26 @@ _MAX_NEIGHBORS_PER_NODE = 400
 
 
 @dataclass(frozen=True, slots=True)
+class ActivationConfig:
+    """The PRD §5.2 spreading parameters, as one explicit argument.
+
+    Field defaults are the module constants above, which remain the single
+    source of the locked holdout values. Passing a non-default instance is how
+    the benchmark sweeps PRD §9 groups 4 through 9.
+    """
+
+    seeds: int = ACTIVATION_SEED_COUNT
+    max_steps: int = ACTIVATION_MAX_STEPS
+    decay: float = ACTIVATION_DECAY
+    min_energy: float = ACTIVATION_MIN_ENERGY
+    hop_bonus: float = ACTIVATION_HOP_BONUS
+    seed_penalty: float = ACTIVATION_SEED_PENALTY
+
+
+DEFAULT_ACTIVATION = ActivationConfig()
+
+
+@dataclass(frozen=True, slots=True)
 class Neighbor:
     memory_id: UUID
     edge_id: str
@@ -47,16 +67,17 @@ Seed = tuple[UUID, float]
 def spread_activation(
     seeds: Sequence[Seed],
     neighbor_lookup: NeighborLookup,
+    config: ActivationConfig = DEFAULT_ACTIVATION,
 ) -> ActivationResult:
     """Spread seed energy through each reached node at most once."""
-    prepared = _prepare_seeds(seeds)
+    prepared = _prepare_seeds(seeds, config)
     if not prepared:
         return ActivationResult((), ())
     energies = {memory_id: energy for memory_id, energy in prepared}
     hops = {memory_id: 0 for memory_id, _ in prepared}
     discovery_order = {memory_id: index for index, (memory_id, _) in enumerate(prepared)}
     seed_ids = frozenset(energies)
-    frontier = [memory_id for memory_id, energy in prepared if energy >= ACTIVATION_MIN_ENERGY]
+    frontier = [memory_id for memory_id, energy in prepared if energy >= config.min_energy]
     propagated: set[UUID] = set()
     path_ids: list[str] = []
     path_set: set[str] = set()
@@ -65,7 +86,7 @@ def spread_activation(
     # (Gauss-Seidel), whereas the PRD §5.2 pseudocode reads as a per-step
     # snapshot. Deterministic, at most mildly energy-inflating; first suspect
     # if bench calibration cannot reproduce the locked holdout config.
-    for _ in range(ACTIVATION_MAX_STEPS):
+    for _ in range(config.max_steps):
         if not frontier:
             break
         frontier = _propagate_frontier(
@@ -77,8 +98,9 @@ def spread_activation(
             propagated,
             path_ids,
             path_set,
+            config,
         )
-    hits = _score_hits(energies, hops, discovery_order, seed_ids)
+    hits = _score_hits(energies, hops, discovery_order, seed_ids, config)
     return ActivationResult(hits, tuple(path_ids))
 
 
@@ -91,6 +113,7 @@ def _propagate_frontier(
     propagated: set[UUID],
     path_ids: list[str],
     path_set: set[str],
+    config: ActivationConfig,
 ) -> list[UUID]:
     next_ids: set[UUID] = set()
     for source_id in frontier:
@@ -107,6 +130,7 @@ def _propagate_frontier(
             propagated,
             path_ids,
             path_set,
+            config,
         )
         next_ids.update(reached)
     return sorted(next_ids, key=lambda memory_id: (-energies[memory_id], discovery_order[memory_id]))
@@ -121,11 +145,12 @@ def _propagate_source(
     propagated: set[UUID],
     path_ids: list[str],
     path_set: set[str],
+    config: ActivationConfig,
 ) -> set[UUID]:
     reached: set[UUID] = set()
     for neighbor in neighbors:
-        energy = energies[source_id] * neighbor.weight * (1.0 - ACTIVATION_DECAY)
-        if energy < ACTIVATION_MIN_ENERGY or energy <= energies.get(neighbor.memory_id, -1.0):
+        energy = energies[source_id] * neighbor.weight * (1.0 - config.decay)
+        if energy < config.min_energy or energy <= energies.get(neighbor.memory_id, -1.0):
             continue
         if neighbor.memory_id not in discovery_order and len(discovery_order) >= _MAX_ACTIVATED_NODES:
             # Node budget reached: keep improving known nodes, discover no more.
@@ -169,24 +194,25 @@ def _score_hits(
     hops: dict[UUID, int],
     discovery_order: dict[UUID, int],
     seed_ids: frozenset[UUID],
+    config: ActivationConfig,
 ) -> tuple[ActivationHit, ...]:
     hits: list[ActivationHit] = []
     for memory_id, energy in energies.items():
-        if energy < ACTIVATION_MIN_ENERGY:
+        if energy < config.min_energy:
             continue
         hop_count = hops[memory_id]
-        multiplier = 1.0 - ACTIVATION_SEED_PENALTY
+        multiplier = 1.0 - config.seed_penalty
         if memory_id not in seed_ids:
-            multiplier = 1.0 + ACTIVATION_HOP_BONUS * hop_count
+            multiplier = 1.0 + config.hop_bonus * hop_count
         hits.append(ActivationHit(memory_id, energy, energy * multiplier, hop_count))
     hits.sort(key=lambda hit: (-hit.score, discovery_order[hit.memory_id]))
     return tuple(hits)
 
 
-def _prepare_seeds(seeds: Sequence[Seed]) -> tuple[Seed, ...]:
+def _prepare_seeds(seeds: Sequence[Seed], config: ActivationConfig) -> tuple[Seed, ...]:
     prepared = tuple(seeds)
-    if len(prepared) > ACTIVATION_SEED_COUNT:
-        raise InvalidArgumentError(f"activation accepts at most {ACTIVATION_SEED_COUNT} seeds")
+    if len(prepared) > config.seeds:
+        raise InvalidArgumentError(f"activation accepts at most {config.seeds} seeds")
     identifiers: list[UUID] = []
     for memory_id, energy in prepared:
         if not isinstance(memory_id, UUID):

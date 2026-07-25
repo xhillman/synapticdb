@@ -1,15 +1,21 @@
+from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
 
 from synapticdb import InvalidArgumentError
+from synapticdb.activation import ActivationConfig
 from synapticdb.learning import (
     SEMANTIC_SEED_CALIBRATION,
     CoRetrievalConfig,
     DecayConfig,
+    FusionConfig,
+    ParameterValue,
     SemanticSeedConfig,
     TemporalLinkConfig,
+    activation_config,
+    blend_weight,
     co_retrieval_config,
     co_retrieval_pairs,
     connect_weight,
@@ -18,6 +24,7 @@ from synapticdb.learning import (
     default_parameters,
     effective_weight,
     feedback_rate,
+    fusion_config,
     negative_feedback_weight,
     passive_reinforcement_rate,
     positive_feedback_seed,
@@ -116,6 +123,65 @@ def test_feedback_rate_reads_the_specified_value() -> None:
 
 def test_connect_weight_reads_the_specified_value() -> None:
     assert connect_weight(default_parameters()) == 0.5
+
+
+def test_the_whole_parameter_budget_is_readable() -> None:
+    params = default_parameters()
+    assert fusion_config(params) == FusionConfig(40, 60)
+    assert blend_weight(params) == 0.45
+    assert activation_config(params) == ActivationConfig(
+        seeds=5, max_steps=5, decay=0.2, min_energy=0.05, hop_bonus=0.15, seed_penalty=0.2
+    )
+
+
+def test_activation_accessor_returns_the_module_defaults() -> None:
+    # The dataclass defaults are the locked constants, so reading the shipped
+    # parameters must reproduce them exactly.
+    assert activation_config(default_parameters()) == ActivationConfig()
+
+
+# Each retrieval parameter and the accessor that owns it.
+RETRIEVAL_ACCESSORS: dict[str, Callable[[Mapping[str, ParameterValue]], object]] = {
+    "candidate_depth": fusion_config,
+    "rrf_k": fusion_config,
+    "activation_seeds": activation_config,
+    "activation_max_steps": activation_config,
+    "activation_decay": activation_config,
+    "activation_min_energy": activation_config,
+    "hop_bonus": activation_config,
+    "seed_penalty": activation_config,
+    "activation_blend_weight": blend_weight,
+}
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("candidate_depth", 101),  # retrieval._MAX_RANKING_LENGTH caps this
+        ("candidate_depth", 0),
+        ("rrf_k", 0),
+        ("activation_seeds", 0),
+        ("activation_max_steps", 21),
+        ("activation_decay", 1.5),
+        ("activation_min_energy", -0.1),
+        ("hop_bonus", 1.5),
+        ("seed_penalty", 1.5),
+        ("activation_blend_weight", 1.5),
+    ],
+)
+def test_retrieval_parameters_reject_out_of_range_values(key: str, value: object) -> None:
+    params = default_parameters()
+    params[key] = value  # type: ignore[assignment]
+    with pytest.raises(InvalidArgumentError):
+        RETRIEVAL_ACCESSORS[key](params)
+
+
+@pytest.mark.parametrize("key", list(RETRIEVAL_ACCESSORS))
+def test_scalar_retrieval_parameters_reject_a_tuple(key: str) -> None:
+    params = default_parameters()
+    params[key] = (1, 2)
+    with pytest.raises(InvalidArgumentError, match="single number"):
+        RETRIEVAL_ACCESSORS[key](params)
 
 
 @pytest.mark.parametrize("value", [None, (0.5, 0.5), 1.5, -0.1])

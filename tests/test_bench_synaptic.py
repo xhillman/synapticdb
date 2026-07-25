@@ -1,9 +1,13 @@
 from collections.abc import Sequence
 from pathlib import Path
 
+import pytest
+
 from bench.dataset import MemoryRecord, load_dataset
 from bench.protocol import run_benchmark
 from bench.retrievers import FixtureRetriever, SynapticRetriever, _fixture_embedding
+from synapticdb import InvalidArgumentError
+from synapticdb.learning import default_parameters
 
 ROOT = Path(__file__).parents[1]
 
@@ -25,16 +29,13 @@ def test_synaptic_retriever_runs_the_smoke_benchmark_without_models() -> None:
         required_unique_wins=0,
     )
     assert report.candidate_name == "synaptic"
-    assert report.candidate_config == {
-        "embedding": "fixture",
-        "activation_blend_weight": 0.45,
-        "semantic_seed_threshold": None,
-        "semantic_seed_max_links": None,
-        "semantic_seed_weight": None,
-        "temporal_window_seconds": 600,
-        "temporal_max_links": 3,
-        "temporal_weight": 0.2,
-    }
+    assert report.candidate_config["embedding"] == "fixture"
+    recorded = report.candidate_config["params"]
+    assert recorded["activation_blend_weight"] == 0.45
+    assert recorded["semantic_seed"] is None
+    assert recorded["temporal_link"] == [600, 3, 0.2]
+    # The record names the whole budget, not a chosen subset.
+    assert set(recorded) == set(default_parameters())
     assert len(report.runs[0].queries) == 10
 
 
@@ -64,14 +65,37 @@ def test_synaptic_retriever_applies_benchmark_semantic_parameters() -> None:
         temporal_link=(300, 2, 0.1),
     )
     try:
-        assert retriever.config.semantic_seed_threshold == 0.8
-        assert retriever.config.semantic_seed_max_links == 1
-        assert retriever.config.semantic_seed_weight == 0.4
-        assert retriever.config.temporal_window_seconds == 300
-        assert retriever.config.temporal_max_links == 2
-        assert retriever.config.temporal_weight == 0.1
+        # The report records the full effective budget, so a promoted record
+        # can never be misread as a default-configuration run.
+        params = retriever.config.params
+        assert params["semantic_seed"] == [0.8, 1, 0.4]
+        assert params["temporal_link"] == [300, 2, 0.1]
+        assert set(params) == set(default_parameters())
     finally:
         retriever.close()
+
+
+def test_synaptic_retriever_applies_and_validates_parameter_overrides() -> None:
+    retriever = SynapticRetriever(
+        _fixture_embedding,
+        embedding_name="fixture",
+        overrides={"activation_blend_weight": 0.9},
+    )
+    try:
+        assert retriever.config.params["activation_blend_weight"] == 0.9
+        assert retriever._memory._params["activation_blend_weight"] == 0.9
+    finally:
+        retriever.close()
+
+    with pytest.raises(ValueError, match="unknown parameter"):
+        SynapticRetriever(_fixture_embedding, embedding_name="fixture", overrides={"nope": 1})
+    # A malformed override must fail at construction, not midway through a run.
+    with pytest.raises(InvalidArgumentError):
+        SynapticRetriever(
+            _fixture_embedding,
+            embedding_name="fixture",
+            overrides={"activation_blend_weight": 5.0},
+        )
 
 
 def test_synaptic_retriever_uses_controlled_ingestion_schedule() -> None:
