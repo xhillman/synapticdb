@@ -4,10 +4,16 @@ SynapticDB is a single-file memory store for AI agents where recall gets
 smarter with use. It combines keyword and semantic search with a graph of
 associations learned from how memories are stored and retrieved.
 
-> **Status:** v0 in progress. Durable hybrid search, spreading activation, and
-> the learning mechanisms (temporal proximity, co-retrieval, decay, explicit
-> feedback, and explicit links) are implemented. Associative-recall gains are
-> still being validated against the in-repository benchmark.
+> **Status:** v0.1. Hybrid search and confidence scoring are measured and
+> working: against the in-repository benchmark's locked baseline, SynapticDB
+> returns 17/25 associative queries to the baseline's 10/25 at equal direct
+> recall, and a 0.6 confidence floor rejects every unanswerable query.
+>
+> The association graph is implemented and enabled — temporal proximity,
+> co-retrieval, decay, feedback, explicit links, and pruning — but **the
+> benchmark does not yet show it improving recall.** Rank quality is
+> unchanged from before the graph existed. Treat the graph as experimental and
+> the search plus confidence path as the reason to use this today.
 
 Install the embedding-enabled package:
 
@@ -36,14 +42,24 @@ ranks results within one recall. `confidence` measures how well a memory
 matches the query, on an absolute scale you can threshold across queries:
 
 ```python
-result = memories.recall("deployment requirements for Client X")
-relevant = [item for item in result.memories if item.confidence >= 0.6]
+result = memories.recall("deployment requirements for Client X", min_confidence=0.6)
+relevant = result.memories        # may be shorter than top_k, or empty
 ```
 
+`min_confidence` drops results below the floor, so a recall can return fewer
+than `top_k` memories — or none. That empty list is the useful part: it is how
+an agent tells "no good answer" from "here are ten weak ones". You can also
+filter after the fact on `item.confidence` if you would rather see everything.
+
 On the in-repository benchmark, a 0.6 threshold kept 41 of 42 correct answers
-and rejected all 12 questions the corpus could not answer. Filtering this way
-is how an agent avoids acting on ten plausible-looking memories for a question
-with no answer.
+and rejected all 12 questions the corpus could not answer.
+
+**The threshold is only as good as your embeddings.** Confidence is cosine
+similarity, so it inherits whatever separation your `embedding_fn` provides. The
+benchmark figures use the default 384-dimensional model; a low-dimensional or
+poorly fitted embedding leaves unrelated queries looking similar to everything,
+and no threshold will help. Check the numbers on your own data before relying on
+a fixed floor.
 
 Association results score low on `confidence` — weak textual similarity is
 exactly why keyword and vector search missed them. Treat the threshold as a

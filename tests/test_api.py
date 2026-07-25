@@ -397,6 +397,55 @@ def test_confidence_is_clamped_to_the_unit_scale() -> None:
         assert confidence == 0.0
 
 
+def test_min_confidence_can_return_nothing_at_all() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        memory._remember_at("gamma one", None, started)
+        memory._remember_at("gamma two", None, started + timedelta(seconds=3600))
+
+        # "alpha" is orthogonal to everything stored. Without a floor the
+        # caller gets two confident-looking results for a question the corpus
+        # cannot answer; with one it gets an honest empty list.
+        unfiltered = memory._recall_at("alpha", 10, None, started + timedelta(seconds=7200))
+        assert len(unfiltered.memories) == 2
+
+        filtered = memory._recall_at("alpha", 10, None, started + timedelta(seconds=7200), 0.6)
+        assert filtered.memories == []
+        assert filtered.query_id is not None
+
+
+def test_min_confidence_keeps_strong_matches_and_drops_weak_ones() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        strong = memory._remember_at("alpha alpha alpha", None, started)
+        memory._remember_at("gamma gamma gamma", None, started + timedelta(seconds=3600))
+
+        result = memory._recall_at("alpha", 10, None, started + timedelta(seconds=7200), 0.6)
+        assert [item.memory.id for item in result.memories] == [strong.id]
+        assert all(item.confidence >= 0.6 for item in result.memories)
+
+
+def test_filtered_results_are_not_learned_from() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        first = memory._remember_at("alpha one", None, started)
+        second = memory._remember_at("gamma two", None, started + timedelta(seconds=3600))
+
+        # Both would be returned unfiltered, and co-retrieval would link them.
+        # A result the caller rejected as too weak must not also be reinforced
+        # as though it were useful.
+        memory._recall_at("alpha", 10, None, started + timedelta(seconds=7200), 0.6)
+        assert memory._store.get_edge_between(first.id, second.id) is None
+
+
+@pytest.mark.parametrize("value", [-0.1, 1.5, float("nan"), True, "high"])
+def test_min_confidence_rejects_invalid_values(value: object) -> None:
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        memory.remember("alpha")
+        with pytest.raises(InvalidArgumentError, match="min_confidence"):
+            memory.recall("alpha", min_confidence=cast(float, value))
+
+
 def test_where_filter_requires_present_equal_metadata() -> None:
     with Synaptic(":memory:", embedding_fn=embedding) as memory:
         call = memory.remember("alpha call", {"source": "call", "optional": None})

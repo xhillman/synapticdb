@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -176,8 +177,20 @@ class Synaptic:
         *,
         top_k: int = 10,
         where: Mapping[str, object] | None = None,
+        min_confidence: float = 0.0,
     ) -> RecallResult:
-        return self._recall_at(query, top_k, where, datetime.now(timezone.utc))
+        """Retrieve memories, optionally dropping those below a confidence floor.
+
+        `min_confidence` filters on `Recalled.confidence`, the absolute
+        similarity between query and memory, so one threshold behaves the same
+        across queries. Raising it lets a recall return **fewer than `top_k`
+        results, including none at all** — which is how a caller distinguishes
+        "no good answer" from "here are ten weak ones".
+
+        Associations carry low confidence by construction, so a high floor
+        returns direct matches only.
+        """
+        return self._recall_at(query, top_k, where, datetime.now(timezone.utc), min_confidence)
 
     def _recall_at(
         self,
@@ -185,6 +198,7 @@ class Synaptic:
         top_k: int,
         where: Mapping[str, object] | None,
         now: datetime,
+        min_confidence: float = 0.0,
     ) -> RecallResult:
         """Run one recall against a single read time.
 
@@ -192,6 +206,7 @@ class Synaptic:
         one neighbor aged to a different instant than the next.
         """
         self._require_open()
+        floor = _unit_parameter(min_confidence, "min_confidence")
         started = time.perf_counter()
         text = _bounded_text(query, "query")
         result_limit = _top_k(top_k)
@@ -199,6 +214,18 @@ class Synaptic:
         embedding = self._embedder.embed(text)
         ranked, activation, maturity = self._rank_candidates(text, embedding, now)
         selected_ids, selected = self._select_results(ranked, filters, result_limit)
+        # Cosine against the query, looked up for the selected results rather
+        # than taken from semantic_search: a result can arrive through keyword
+        # search or activation without entering the semantic top-k.
+        similarities = self._store.similarities(embedding, selected_ids)
+        confidences = {
+            # A negative cosine means unrelated, not anti-relevant.
+            memory_id: max(0.0, min(1.0, similarities.get(memory_id, 0.0)))
+            for memory_id in selected_ids
+        }
+        # Filter before learning, not after: an association the caller rejected
+        # as too weak should not also be reinforced as though it were useful.
+        selected_ids = tuple(memory_id for memory_id in selected_ids if confidences[memory_id] >= floor)
         energies = _recall_energies(selected_ids, activation)
         pair_seeds = self._co_retrieval_seeds(selected_ids)
         query_row, memories = self._store.record_recall(
@@ -212,16 +239,11 @@ class Synaptic:
         )
         if pair_seeds:
             self._confidence.invalidate()
-        # Cosine against the query, looked up for the selected results rather
-        # than taken from semantic_search: a result can arrive through keyword
-        # search or activation without entering the semantic top-k.
-        similarities = self._store.similarities(embedding, selected_ids)
         recalled = [
             Recalled(
                 memory=memory,
                 score=selected[memory.id].score,
-                # A negative cosine means unrelated, not anti-relevant.
-                confidence=max(0.0, min(1.0, similarities.get(memory.id, 0.0))),
+                confidence=confidences[memory.id],
                 via=selected[memory.id].via,
             )
             for memory in memories
@@ -505,6 +527,15 @@ def _bounded_text(value: str, label: str) -> str:
     if len(value) > _MAX_TEXT_CHARS:
         raise InvalidArgumentError(f"{label} exceeds {_MAX_TEXT_CHARS} characters")
     return value
+
+
+def _unit_parameter(value: float, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise InvalidArgumentError(f"{label} must be a number between 0 and 1")
+    number = float(value)
+    if not math.isfinite(number) or not 0.0 <= number <= 1.0:
+        raise InvalidArgumentError(f"{label} must be a number between 0 and 1")
+    return number
 
 
 def _top_k(value: int) -> int:
