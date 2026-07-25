@@ -16,6 +16,7 @@ from synapticdb.activation import ActivationResult, Neighbor, spread_activation
 from synapticdb.confidence import ConfidenceCache, GraphMetrics
 from synapticdb.embeddings import Embedder, EmbeddingFunction
 from synapticdb.learning import (
+    LINKED_RESULT_COUNT,
     ParameterValue,
     activation_config,
     blend_weight,
@@ -348,10 +349,26 @@ class Synaptic:
         A query row outlives the memories it names, so pair only the results
         that still exist: feedback on a partly forgotten recall applies to what
         remains rather than failing.
+
+        Result pairs are bounded to the top LINKED_RESULT_COUNT, amending PRD
+        §6.6. As written, §6.6 pairs every entry of `result_ids`, which is
+        C(top_k, 2): 45 edges per event at top_k 10, and 4,950 at 100. Because
+        `top_k` is a caller-controlled per-call argument, one
+        `recall(top_k=100)` followed by `feedback()` would write nearly five
+        thousand edges — write amplification driven by an API caller, against
+        co-retrieval's deliberately fixed 10.
+
+        Measured on the chained profile: unbounded feedback built 943 learned
+        edges against 150 real ones and cost two associative hits; bounding it
+        cut that to 177 and recovered one. See the 2026-07-25 entry in
+        dev/v0-dev-plan.md.
+
+        Path edges are not bounded here. They already exist — activation
+        traversed them — so reinforcing one grows nothing.
         """
         targets: dict[frozenset[UUID], _FeedbackTarget] = {}
         surviving = self._store.existing_memory_ids(query.result_ids)
-        for first_id, second_id in unordered_pairs(surviving):
+        for first_id, second_id in unordered_pairs(surviving[:LINKED_RESULT_COUNT]):
             targets[frozenset((first_id, second_id))] = _FeedbackTarget(first_id, second_id, None)
         path_edges = self._store.edges_by_ids(
             query.path_edge_ids,

@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from synapticdb import InvalidArgumentError, NotFoundError, Synaptic
-from synapticdb.learning import SEMANTIC_SEED_CALIBRATION
+from synapticdb.learning import LINKED_RESULT_COUNT, SEMANTIC_SEED_CALIBRATION
 from synapticdb.retrieval import min_max_normalize, reciprocal_rank_fusion
 
 
@@ -287,6 +287,30 @@ def test_positive_feedback_creates_a_missing_result_pair_edge() -> None:
         assert created is not None
         assert created.origin == "co_retrieval"
         assert created.weight == pytest.approx(0.05 * 0.4)
+
+
+def test_feedback_edge_creation_is_bounded_by_the_linked_result_count() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        # Ten results, each far enough apart that no temporal edge forms, so
+        # every edge afterwards is one feedback created.
+        ids = [
+            memory._remember_at(f"alpha memory {index}", None, started + timedelta(seconds=3600 * index)).id
+            for index in range(10)
+        ]
+        query = memory._store.save_query("alpha", tuple(ids), dict.fromkeys(ids, 1.0), ())
+        assert memory.stats().edges == 0
+
+        memory._feedback_at(query.id, True, started + timedelta(seconds=36_000))
+
+        # PRD §6.6 as written pairs every result: C(10, 2) = 45 edges from one
+        # call, scaling to 4,950 at the maximum top_k. Bounded to the top five
+        # it is C(5, 2) = 10, matching co-retrieval.
+        expected = LINKED_RESULT_COUNT * (LINKED_RESULT_COUNT - 1) // 2
+        assert memory.stats().edges == expected
+        # The edges are among the top results, not spread across the tail.
+        assert memory._store.get_edge_between(ids[0], ids[4]) is not None
+        assert memory._store.get_edge_between(ids[0], ids[9]) is None
 
 
 def test_repeated_feedback_raises_and_unknown_query_raises() -> None:

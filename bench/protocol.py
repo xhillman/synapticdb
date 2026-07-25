@@ -215,7 +215,7 @@ def _execute_seed(
             candidate.ingest(dataset.memories, seed=seed)
         cold = None
         if "trajectory" in measures:
-            cold = _cold_associative_hits(dataset, seed, candidate_factory, top_k, resources)
+            cold = _cold_associative_hits(dataset, seed, candidate_factory, top_k, resources, timeline)
         _warm(baseline, dataset, top_k, timeline)
         if candidate is not baseline:
             _warm(candidate, dataset, top_k, timeline)
@@ -345,18 +345,25 @@ def _cold_associative_hits(
     candidate_factory: RetrieverFactory | None,
     top_k: int,
     resources: ExitStack,
+    timeline: Timeline,
 ) -> int | None:
     """Score the holdout on an unwarmed instance, for the trajectory gate.
 
     A separate instance rather than an earlier pass on the same one: recall
     itself writes co-retrieval edges, so a first pass cannot be repeated as a
     clean baseline.
+
+    The cold instance is advanced to the *same instant* the warm one answers
+    at. Skipping that compares a fresh graph against an aged one and charges
+    the difference to warming: at a 37-day offset a temporal edge has decayed
+    to 43% of its weight, which swamps whatever the warm-up did.
     """
     if candidate_factory is None:
         return None
     cold = candidate_factory()
     resources.callback(cold.close)
     cold.ingest(dataset.memories, seed=seed)
+    _advance(cold, cold, timeline.warmup_span_days + timeline.query_offset_days)
     results = [cold.recall(query.text, top_k=top_k) for query in dataset.queries]
     return _associative_hits(dataset, results, top_k)
 

@@ -19,10 +19,15 @@ DEFAULT_HALF_LIFE_DAYS = 30.0
 _MAX_HALF_LIFE_DAYS = 3650
 _SECONDS_PER_DAY = 86_400.0
 
-# PRD section 6.3 links the top 5 final results of a recall. This is a separate
-# concept from ACTIVATION_SEED_COUNT, which happens to share the value 5:
-# one bounds what a recall learns, the other bounds where activation starts.
-CO_RETRIEVAL_RESULT_COUNT = 5
+# How many of a recall's top results are close enough to link. Both learning
+# mechanisms that create edges from results use it: co-retrieval (PRD §6.3) and
+# explicit feedback (§6.6, as amended — see api.Synaptic._feedback_pairs). One
+# constant because it is one idea, and letting the two drift apart is what
+# produced the write amplification the amendment fixes.
+#
+# Separate from ACTIVATION_SEED_COUNT, which happens to share the value 5: this
+# bounds what a recall learns, that bounds where activation starts.
+LINKED_RESULT_COUNT = 5
 
 # PRD §6.6: positive feedback creates a missing edge at 0.05·e_i·e_j, never
 # below 0.02 — the same value §6.5 prunes at, so a created edge starts at or
@@ -224,10 +229,10 @@ def co_retrieval_pairs(result_ids: Sequence[UUID]) -> tuple[tuple[UUID, UUID], .
     """Return every unordered pair among the top results of one recall.
 
     Bounded by construction: slicing before pairing means at most
-    CO_RETRIEVAL_RESULT_COUNT results yield at most 10 pairs, whatever the
+    LINKED_RESULT_COUNT results yield at most 10 pairs, whatever the
     caller passes.
     """
-    return unordered_pairs(tuple(result_ids)[:CO_RETRIEVAL_RESULT_COUNT])
+    return unordered_pairs(tuple(result_ids)[:LINKED_RESULT_COUNT])
 
 
 def reinforce_weight(weight: float, rate: float) -> float:
