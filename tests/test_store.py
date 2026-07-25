@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from synapticdb import EmbeddingError, InvalidArgumentError, NotFoundError
-from synapticdb.store import EdgeSeed, Store
+from synapticdb.store import EdgeSeed, PairSeed, Store
 
 
 @pytest.fixture
@@ -316,9 +316,9 @@ def test_reinforcement_decays_the_stored_weight_before_raising_it(store: Store) 
     later = created_at + timedelta(days=30)
     edge = store.insert_edge(first_id, second_id, 0.4, "semantic", created_at=created_at)
 
-    # _write_edge is driven directly because every public caller today
-    # reinforces an edge created in the same call, where no time has passed.
-    # Phase 5.4 co-retrieval is the first mechanism to reinforce an aged edge.
+    # _write_edge is driven directly here to isolate the arithmetic. The same
+    # decay-then-reinforce path runs publicly through co-retrieval: see
+    # test_co_retrieval_reinforcement_decays_the_edge_first.
     with store._connection:
         store._write_edge(first_id, EdgeSeed(second_id, 0.2, "temporal", 0.05), later, 30.0)
 
@@ -432,6 +432,92 @@ def test_record_recall_rolls_back_when_a_memory_is_unknown(store: Store) -> None
     with pytest.raises(NotFoundError):
         store.get_query(query_id)
     assert store.get_memory(memory_id).access_count == 0
+
+
+def _co_retrieval_recall(
+    store: Store,
+    first_id: UUID,
+    second_id: UUID,
+    recorded_at: datetime,
+) -> None:
+    store.record_recall(
+        "related facts",
+        (first_id, second_id),
+        {first_id: 1.0, second_id: 0.9},
+        (),
+        recorded_at=recorded_at,
+        pair_seeds=(PairSeed(first_id, second_id, 0.05, "co_retrieval", 0.05),),
+    )
+
+
+def test_recall_creates_then_reinforces_one_co_retrieval_edge(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    recorded_at = datetime(2026, 7, 23, 15, 30, tzinfo=timezone.utc)
+
+    _co_retrieval_recall(store, first_id, second_id, recorded_at)
+    created = store.get_edge_between(first_id, second_id, now=recorded_at)
+    assert created is not None
+    assert created.weight == pytest.approx(0.05)
+    assert created.origin == "co_retrieval"
+    assert created.reinforcement_count == 0
+
+    _co_retrieval_recall(store, first_id, second_id, recorded_at)
+    reinforced = store.get_edge_between(first_id, second_id, now=recorded_at)
+    assert reinforced is not None
+    # 0.05 + 0.05 * (1 - 0.05); one edge, not two.
+    assert reinforced.weight == pytest.approx(0.0975)
+    assert reinforced.reinforcement_count == 1
+    assert store.graph_summary(now=recorded_at).edge_count == 1
+
+
+def test_co_retrieval_reinforcement_decays_the_edge_first(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    created_at = datetime(2026, 7, 23, 15, 30, tzinfo=timezone.utc)
+    later = created_at + timedelta(days=30)
+
+    _co_retrieval_recall(store, first_id, second_id, created_at)
+    _co_retrieval_recall(store, first_id, second_id, later)
+
+    edge = store.get_edge_between(first_id, second_id, now=later)
+    assert edge is not None
+    # One half-life takes 0.05 to 0.025, then reinforcement adds 0.05*(1-0.025).
+    assert edge.weight == pytest.approx(0.073750)
+    assert edge.last_reinforced_at == later
+
+
+def test_recall_rolls_back_the_query_when_a_learned_pair_is_unknown(store: Store) -> None:
+    memory_id = remember(store, "first")
+    unknown_id = uuid4()
+    query_id = uuid4()
+    with pytest.raises(NotFoundError):
+        store.record_recall(
+            "related facts",
+            (memory_id,),
+            {memory_id: 1.0},
+            (),
+            query_id=query_id,
+            pair_seeds=(PairSeed(memory_id, unknown_id, 0.05, "co_retrieval", 0.05),),
+        )
+    with pytest.raises(NotFoundError):
+        store.get_query(query_id)
+    assert store.get_memory(memory_id).access_count == 0
+    assert store.graph_summary().edge_count == 0
+
+
+def test_recall_rejects_repeated_and_oversized_pair_seeds(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    reversed_duplicate = (
+        PairSeed(first_id, second_id, 0.05, "co_retrieval", 0.05),
+        PairSeed(second_id, first_id, 0.05, "co_retrieval", 0.05),
+    )
+    with pytest.raises(InvalidArgumentError, match="repeat an edge"):
+        store.record_recall("q", (first_id,), {first_id: 1.0}, (), pair_seeds=reversed_duplicate)
+    too_many = tuple(PairSeed(first_id, uuid4(), 0.05, "co_retrieval", 0.05) for _ in range(11))
+    with pytest.raises(InvalidArgumentError, match="at most 10 edges"):
+        store.record_recall("q", (first_id,), {first_id: 1.0}, (), pair_seeds=too_many)
 
 
 def test_query_validation_rejects_incomplete_data(store: Store) -> None:

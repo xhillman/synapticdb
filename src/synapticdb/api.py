@@ -21,6 +21,8 @@ from synapticdb.confidence import ConfidenceCache, GraphMetrics
 from synapticdb.embeddings import Embedder, EmbeddingFunction
 from synapticdb.learning import (
     ParameterValue,
+    co_retrieval_config,
+    co_retrieval_pairs,
     decay_config,
     default_parameters,
     passive_reinforcement_rate,
@@ -35,7 +37,7 @@ from synapticdb.retrieval import (
     min_max_normalize,
     reciprocal_rank_fusion,
 )
-from synapticdb.store import CANDIDATE_LIMIT, EdgeSeed, GraphSummary, Store
+from synapticdb.store import CANDIDATE_LIMIT, EdgeSeed, GraphSummary, PairSeed, Store
 
 _MAX_FILTER_KEYS = 64
 _MAX_TEXT_CHARS = 1_000_000
@@ -154,13 +156,18 @@ class Synaptic:
         ranked, activation, maturity = self._rank_candidates(text, embedding, now)
         selected_ids, selected = self._select_results(ranked, filters, result_limit)
         energies = _result_energies(selected_ids, activation)
+        pair_seeds = self._co_retrieval_seeds(selected_ids)
         query_row, memories = self._store.record_recall(
             text,
             selected_ids,
             energies,
             activation.path_edge_ids,
             recorded_at=now,
+            pair_seeds=pair_seeds,
+            half_life_days=self._half_life_days(),
         )
+        if pair_seeds:
+            self._confidence.invalidate()
         recalled = [
             Recalled(memory=memory, score=selected[memory.id].score, via=selected[memory.id].via)
             for memory in memories
@@ -212,6 +219,20 @@ class Synaptic:
             target_id = edge.b if edge.a == memory_id else edge.a
             neighbors.append(Neighbor(target_id, edge.id, edge.effective_weight))
         return tuple(neighbors)
+
+    def _co_retrieval_seeds(self, result_ids: Sequence[UUID]) -> tuple[PairSeed, ...]:
+        """Build the PRD §6.3 edges linking the top results of one recall."""
+        config = co_retrieval_config(self._params)
+        return tuple(
+            PairSeed(
+                first_id,
+                second_id,
+                config.initial_weight,
+                "co_retrieval",
+                config.reinforcement_rate,
+            )
+            for first_id, second_id in co_retrieval_pairs(result_ids)
+        )
 
     def _half_life_days(self) -> float:
         return float(decay_config(self._params).half_life_days)

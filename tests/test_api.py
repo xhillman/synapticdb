@@ -146,6 +146,59 @@ def test_recall_blends_association_and_persists_activation_evidence() -> None:
         assert edge.id in stored.path_edge_ids
 
 
+def test_recall_links_its_top_results_and_reinforces_on_repeat() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        first = memory._remember_at("alpha one", None, started)
+        second = memory._remember_at("alpha two", None, started + timedelta(seconds=601))
+
+        memory._recall_at("alpha", 10, None, started + timedelta(seconds=1200))
+        edge = memory._store.get_edge_between(first.id, second.id)
+        assert edge is not None
+        assert edge.origin == "co_retrieval"
+        assert edge.weight == pytest.approx(0.05)
+
+        memory._recall_at("alpha", 10, None, started + timedelta(seconds=1300))
+        reinforced = memory._store.get_edge_between(first.id, second.id)
+        assert reinforced is not None
+        # 0.05 + 0.05 * (1 - 0.05), less the decay accrued over the 100 seconds
+        # between the two recalls: reinforcement always builds on the aged
+        # weight, so the result sits just below a clean 0.0975.
+        assert reinforced.weight == pytest.approx(0.0975, rel=1e-3)
+        assert reinforced.weight < 0.0975
+        assert reinforced.reinforcement_count == 1
+        # stats() reads through the confidence cache; a stale cache here would
+        # mean the co-retrieval write skipped its invalidation.
+        assert memory.stats().edges_by_origin["co_retrieval"] == 1
+
+
+def test_recall_below_two_results_learns_nothing() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        memory._remember_at("alpha only", None, started)
+        memory._recall_at("alpha", 10, None, started + timedelta(seconds=601))
+        assert memory.stats().edges == 0
+
+
+def test_a_new_co_retrieval_edge_carries_no_energy_until_reinforced() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        anchor = memory._remember_at("alpha anchor", None, started)
+        far = memory._remember_at("delta far", None, started + timedelta(seconds=601))
+        # A single 0.05 edge: activation would carry 1.0 * 0.05 * 0.8 = 0.04,
+        # under the 0.05 minimum energy, so the pair cannot yet spread.
+        edge = memory._store.insert_edge(anchor.id, far.id, 0.05, "co_retrieval")
+        result = memory._recall_at("alpha", 10, None, started + timedelta(seconds=1200))
+        assert edge.id not in memory._store.get_query(result.query_id).path_edge_ids
+
+        # One reinforcement lifts it to 0.0975, above the 0.0625 an edge needs
+        # to propagate a full-energy seed. This threshold is why co-retrieval
+        # only matters for pairs that recur.
+        memory._store.bulk_update_edge_weights(((edge.id, 0.0975),))
+        after = memory._recall_at("alpha", 10, None, started + timedelta(seconds=1300))
+        assert edge.id in memory._store.get_query(after.query_id).path_edge_ids
+
+
 def test_activation_energy_falls_as_the_connecting_edge_ages() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with Synaptic(":memory:", embedding_fn=embedding) as memory:

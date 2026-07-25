@@ -61,6 +61,7 @@ Phase 5 learning milestones are recorded separately:
 - `bench/records/phase5-1-semantic-seeding/`
 - `bench/records/phase5-2-temporal-proximity/`
 - `bench/records/phase5-3-decay/`
+- `bench/records/phase5-4-co-retrieval/`
 
 The Phase 5.2 record preserves 25/25 direct hits and 17/25 associative hits.
 Temporal proximity raises path-backed associative unique wins from 0/25 to
@@ -74,6 +75,22 @@ exercise edge decay:** ingestion stamps memories at `_INGEST_EPOCH`
 decays by a factor of exactly 1.0. Decay is covered by unit tests instead. A
 future phase that wants decay in the gate must move the ingest epoch into the
 past and offset the query times with it.
+
+The Phase 5.4 co-retrieval record matches Phase 5.3 on every per-query outcome.
+**This harness structurally cannot reward co-retrieval, which is a property of
+the benchmark rather than of the mechanism.** A pair must reach the top 5 of two
+separate queries before its edge clears the 0.0625 weight needed to carry a
+full-energy seed, but the 6 warm-up events are deliberately disjoint from the 25
+associative chains and each holdout query targets a different chain. Making them
+overlap would be teaching to the test.
+
+The mechanism does work: across ingest, warm-up, and the 50 holdout queries the
+graph grew from 150 temporal edges to 608, and 31 co-retrieval edges were
+reinforced past the propagation threshold. None changed an outcome, because they
+linked memories the fusion ranking had already returned together. Note this is a
+different failure from semantic seeding below: that mechanism duplicated what
+vector search already found, whereas co-retrieval's value case (repeated
+querying of the same topics) is simply absent from this corpus.
 
 **Semantic seeding is disabled by default** (`_params["semantic_seed"] = None`).
 A full-corpus A/B and a threshold sweep showed it contributes +0 unique wins at

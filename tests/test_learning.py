@@ -6,9 +6,12 @@ import pytest
 from synapticdb import InvalidArgumentError
 from synapticdb.learning import (
     SEMANTIC_SEED_CALIBRATION,
+    CoRetrievalConfig,
     DecayConfig,
     SemanticSeedConfig,
     TemporalLinkConfig,
+    co_retrieval_config,
+    co_retrieval_pairs,
     decay_config,
     decayed_weight,
     default_parameters,
@@ -56,6 +59,50 @@ def test_semantic_seed_selection_rejects_unbounded_candidates() -> None:
 
 def test_passive_reinforcement_moves_weight_toward_one() -> None:
     assert reinforce_weight(0.25, 0.05) == pytest.approx(0.2875)
+
+
+def test_co_retrieval_config_reads_the_specified_weight_and_rate() -> None:
+    assert co_retrieval_config(default_parameters()) == CoRetrievalConfig(0.05, 0.05)
+
+
+@pytest.mark.parametrize("group", [(0.05,), (0.05, 1.5), (-0.1, 0.05), 0.05, None])
+def test_co_retrieval_config_rejects_a_malformed_group(group: object) -> None:
+    params = default_parameters()
+    params["co_retrieval"] = group  # type: ignore[assignment]
+    with pytest.raises(InvalidArgumentError):
+        co_retrieval_config(params)
+
+
+def test_co_retrieval_pairs_links_every_top_result_once() -> None:
+    ids = tuple(uuid4() for _ in range(5))
+    pairs = co_retrieval_pairs(ids)
+    assert len(pairs) == 10
+    assert len({frozenset(pair) for pair in pairs}) == 10
+    assert all(first != second for first, second in pairs)
+
+
+def test_co_retrieval_pairs_are_bounded_to_the_top_five_results() -> None:
+    ids = tuple(uuid4() for _ in range(20))
+    pairs = co_retrieval_pairs(ids)
+    # The slice happens before pairing, so 20 results cannot yield 190 edges.
+    assert len(pairs) == 10
+    assert set(ids[5:]).isdisjoint({value for pair in pairs for value in pair})
+
+
+def test_co_retrieval_pairs_are_deterministic() -> None:
+    ids = tuple(uuid4() for _ in range(5))
+    assert co_retrieval_pairs(ids) == co_retrieval_pairs(ids)
+
+
+@pytest.mark.parametrize("count", [0, 1])
+def test_co_retrieval_needs_two_results_to_link_anything(count: int) -> None:
+    assert co_retrieval_pairs(tuple(uuid4() for _ in range(count))) == ()
+
+
+def test_co_retrieval_pairs_reject_repeated_results() -> None:
+    repeated = uuid4()
+    with pytest.raises(InvalidArgumentError, match="unique"):
+        co_retrieval_pairs((repeated, repeated))
 
 
 def test_decay_config_reads_the_specified_half_life_and_threshold() -> None:

@@ -25,6 +25,8 @@ from synapticdb.models import EdgeOrigin, EmbeddingError, InvalidArgumentError, 
 CANDIDATE_LIMIT = 40
 _EDGE_LOOKUP_LIMIT = 400
 _MEMORY_EDGE_LIMIT = 80
+# PRD §6.3 pairs the top 5 results of a recall, so C(5, 2) = 10 edges.
+_RECALL_EDGE_LIMIT = 10
 _EXPIRE_BATCH_LIMIT = 1000
 _QUERY_TOKEN_LIMIT = 64
 _TEMPORAL_LINK_LIMIT = 40
@@ -61,6 +63,21 @@ class Edge:
 @dataclass(frozen=True, slots=True)
 class EdgeSeed:
     memory_id: UUID
+    weight: float
+    origin: EdgeOrigin
+    reinforce_rate: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PairSeed:
+    """One edge between two existing memories.
+
+    The free-standing sibling of EdgeSeed, which is anchored to the memory
+    being inserted and so names only the other endpoint.
+    """
+
+    first_id: UUID
+    second_id: UUID
     weight: float
     origin: EdgeOrigin
     reinforce_rate: float | None = None
@@ -638,28 +655,52 @@ class Store:
         *,
         query_id: UUID | None = None,
         recorded_at: datetime | None = None,
+        pair_seeds: Sequence[PairSeed] = (),
+        half_life_days: float = DEFAULT_HALF_LIFE_DAYS,
     ) -> tuple[QueryRow, tuple[Memory, ...]]:
-        """Persist query evidence and update returned memories in one transaction."""
+        """Persist query evidence, access bumps, and learned edges in one transaction.
+
+        A recall is one event: if its co-retrieval edges cannot be written, the
+        query row it learned them from must not survive either.
+        """
         self._require_open()
         timestamp = _require_utc(recorded_at or _utc_now(), "recorded_at")
         prepared = _prepare_query(text, result_ids, energies, path_edge_ids, query_id, timestamp)
+        seeds = _prepare_pair_seeds(pair_seeds)
         identifiers = prepared.result_ids
         with self._connection:
             self._require_memory_ids(identifiers)
             self._insert_query(prepared)
-            if identifiers:
-                placeholders = ",".join("?" for _ in identifiers)
-                self._connection.execute(
-                    f"""
-                    UPDATE memories
-                    SET access_count = access_count + 1, last_accessed_at = ?
-                    WHERE id IN ({placeholders})
-                    """,
-                    (timestamp.isoformat(), *identifiers),
-                )
+            self._bump_accessed(identifiers, timestamp)
+            self._write_pair_seeds(seeds, timestamp, half_life_days)
             query_row = self._required_query_row(prepared.identifier)
             memory_rows = tuple(self._required_memory_row(UUID(identifier)) for identifier in identifiers)
         return _query_from_row(query_row), tuple(_memory_from_row(row) for row in memory_rows)
+
+    def _bump_accessed(self, identifiers: Sequence[str], timestamp: datetime) -> None:
+        if not identifiers:
+            return
+        placeholders = ",".join("?" for _ in identifiers)
+        self._connection.execute(
+            f"""
+            UPDATE memories
+            SET access_count = access_count + 1, last_accessed_at = ?
+            WHERE id IN ({placeholders})
+            """,
+            (timestamp.isoformat(), *identifiers),
+        )
+
+    def _write_pair_seeds(
+        self,
+        seeds: Sequence[PairSeed],
+        timestamp: datetime,
+        half_life_days: float,
+    ) -> None:
+        """Create or reinforce each learned edge inside the caller's transaction."""
+        for seed in seeds:
+            self._require_memory_ids((str(seed.first_id), str(seed.second_id)))
+            edge_seed = EdgeSeed(seed.second_id, seed.weight, seed.origin, seed.reinforce_rate)
+            self._write_edge(seed.first_id, edge_seed, timestamp, half_life_days)
 
     def get_query(self, query_id: UUID) -> QueryRow:
         self._require_open()
@@ -886,6 +927,32 @@ def _prepare_metadata(metadata: Mapping[str, object]) -> str:
     if not all(isinstance(key, str) for key in metadata):
         raise InvalidArgumentError("metadata keys must be strings")
     return _encode_json(dict(metadata), "metadata")
+
+
+def _prepare_pair_seeds(pair_seeds: Sequence[PairSeed]) -> tuple[PairSeed, ...]:
+    seeds = tuple(pair_seeds)
+    if len(seeds) > _RECALL_EDGE_LIMIT:
+        raise InvalidArgumentError(f"one recall writes at most {_RECALL_EDGE_LIMIT} edges")
+    if not all(isinstance(seed, PairSeed) for seed in seeds):
+        raise InvalidArgumentError("pair seeds must be PairSeed values")
+    endpoints = tuple((seed.first_id, seed.second_id) for seed in seeds)
+    if not all(isinstance(value, UUID) for pair in endpoints for value in pair):
+        raise InvalidArgumentError("pair seed memory IDs must be UUID values")
+    # Compare canonically: (a, b) and (b, a) address the same edge row, so
+    # accepting both would make one write silently reinforce the other.
+    canonical = tuple(frozenset(pair) for pair in endpoints)
+    if len(set(canonical)) != len(canonical):
+        raise InvalidArgumentError("pair seeds must not repeat an edge")
+    return tuple(
+        PairSeed(
+            seed.first_id,
+            seed.second_id,
+            _unit_float(seed.weight, "weight"),
+            _edge_origin(seed.origin),
+            None if seed.reinforce_rate is None else _unit_float(seed.reinforce_rate, "reinforce rate"),
+        )
+        for seed in seeds
+    )
 
 
 def _prepare_edge_seeds(edge_seeds: Sequence[EdgeSeed]) -> tuple[EdgeSeed, ...]:

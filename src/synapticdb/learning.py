@@ -18,6 +18,11 @@ DEFAULT_HALF_LIFE_DAYS = 30.0
 _MAX_HALF_LIFE_DAYS = 3650
 _SECONDS_PER_DAY = 86_400.0
 
+# PRD section 6.3 links the top 5 final results of a recall. This is a separate
+# concept from ACTIVATION_SEED_COUNT, which happens to share the value 5:
+# one bounds what a recall learns, the other bounds where activation starts.
+CO_RETRIEVAL_RESULT_COUNT = 5
+
 # Calibration values for semantic seeding (PRD §6.1 / §9 group 11). Semantic
 # seeding is DISABLED by default (see default_parameters): the full-corpus
 # benchmark showed it contributes +0 associative unique wins at every threshold
@@ -40,6 +45,12 @@ class TemporalLinkConfig:
     window_seconds: int
     max_links: int
     initial_weight: float
+
+
+@dataclass(frozen=True, slots=True)
+class CoRetrievalConfig:
+    initial_weight: float
+    reinforcement_rate: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,12 +116,19 @@ def decay_config(params: Mapping[str, ParameterValue]) -> DecayConfig:
     return DecayConfig(half_life_days, prune_threshold)
 
 
-def passive_reinforcement_rate(params: Mapping[str, ParameterValue]) -> float:
-    """Return the passive reinforcement rate shared by learning mechanisms."""
+def co_retrieval_config(params: Mapping[str, ParameterValue]) -> CoRetrievalConfig:
+    """Read and validate the co-retrieval parameter group."""
     value = params.get("co_retrieval")
     if not isinstance(value, tuple) or len(value) != 2:
         raise InvalidArgumentError("co_retrieval must contain initial weight and reinforcement rate")
-    return _unit_float(value[1], "passive reinforcement rate")
+    initial_weight = _unit_float(value[0], "co-retrieval initial weight")
+    reinforcement_rate = _unit_float(value[1], "passive reinforcement rate")
+    return CoRetrievalConfig(initial_weight, reinforcement_rate)
+
+
+def passive_reinforcement_rate(params: Mapping[str, ParameterValue]) -> float:
+    """Return the passive reinforcement rate shared by learning mechanisms."""
+    return co_retrieval_config(params).reinforcement_rate
 
 
 def semantic_seed_ids(
@@ -131,6 +149,24 @@ def semantic_seed_ids(
         selected.append(memory_id)
         seen.add(memory_id)
     return tuple(selected)
+
+
+def co_retrieval_pairs(result_ids: Sequence[UUID]) -> tuple[tuple[UUID, UUID], ...]:
+    """Return every unordered pair among the top results of one recall.
+
+    Bounded by construction: at most CO_RETRIEVAL_RESULT_COUNT results produce
+    at most 10 pairs, so a recall can never write an unbounded number of edges.
+    """
+    selected = tuple(result_ids)[:CO_RETRIEVAL_RESULT_COUNT]
+    if not all(isinstance(memory_id, UUID) for memory_id in selected):
+        raise InvalidArgumentError("result IDs must be UUID values")
+    if len(set(selected)) != len(selected):
+        raise InvalidArgumentError("result IDs must be unique")
+    pairs: list[tuple[UUID, UUID]] = []
+    for first_index, first_id in enumerate(selected):
+        for second_id in selected[first_index + 1 :]:
+            pairs.append((first_id, second_id))
+    return tuple(pairs)
 
 
 def reinforce_weight(weight: float, rate: float) -> float:

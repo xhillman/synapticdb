@@ -36,9 +36,9 @@ class ConfidenceCache:
     """Cache confidence until a successful graph-affecting write invalidates it.
 
     This cache has no key: correctness depends on every graph write calling
-    invalidate(). TODO(phase-5): co-retrieval reinforcement (inside recall),
-    feedback edge updates, and connect() all write the graph and must
-    invalidate; a missed call means maturity goes silently stale.
+    invalidate(). remember(), forget(), and co-retrieval reinforcement (inside
+    recall) all do. TODO(phase-5): feedback edge updates and connect() must
+    invalidate too; a missed call means maturity goes silently stale.
 
     Edge decay (PRD §6.4) also moves confidence, and time passing fires no
     invalidate(). A long-lived instance that never writes therefore reports the
