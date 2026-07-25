@@ -20,41 +20,47 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v9
         with:
           enable-cache: true
+      # Mirrors quality.yml: locked install, 3.10 floor, environment on PATH so
+      # no step re-syncs the dev tools away.
       - name: Install locked development dependencies
-        run: uv sync --extra dev --frozen --python 3.10
+        run: |
+          uv sync --extra dev --frozen --python 3.10
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       # A tag can be pushed to a commit CI never saw. Re-run the gates here so a
       # release cannot ship code that would fail the quality workflow.
       - name: Check formatting
-        run: uv run ruff format --check .
+        run: ruff format --check .
       - name: Lint
-        run: uv run ruff check .
+        run: ruff check .
       - name: Type check
-        run: uv run mypy
+        run: mypy
       - name: Test with warnings as errors
-        run: uv run python -W error -m pytest
+        run: python -W error -m pytest
       - name: Run dependency-free benchmark smoke gate
-        run: uv run python -W error -m bench --profile smoke --retriever fixture --check --no-write
+        run: python -W error -m bench --profile smoke --retriever fixture --check --no-write
       - name: Run Synaptic walking-skeleton smoke gate
-        run: uv run python -W error -m bench --profile smoke --retriever synaptic --check --no-write
+        run: python -W error -m bench --profile smoke --retriever synaptic --check --no-write
       - name: Build wheel and source distribution
-        run: uv run python -m build
+        run: python -m build
       - name: Verify the tag matches the packaged version
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           tag_version="${GITHUB_REF_NAME#v}"
           # Read with a regex rather than tomllib, which is 3.11 and newer only
           # while these gates deliberately run on the 3.10 floor.
-          package_version="$(uv run python -c 'import re,pathlib; print(re.search(r"^version = \"([^\"]+)\"", pathlib.Path("pyproject.toml").read_text(), re.M).group(1))')"
+          package_version="$(python -c 'import re,pathlib; print(re.search(r"^version = \"([^\"]+)\"", pathlib.Path("pyproject.toml").read_text(), re.M).group(1))')"
           if [ "$tag_version" != "$package_version" ]; then
             echo "tag ${GITHUB_REF_NAME} does not match pyproject version ${package_version}"
             exit 1
           fi
+      # uvx runs twine as an isolated tool, so it never touches the synced
+      # project environment.
       - name: Check distribution metadata
-        run: uv run --with twine python -m twine check dist/*
+        run: uvx twine check dist/*
       - uses: actions/upload-artifact@v4
         with:
           name: distributions
