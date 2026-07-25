@@ -30,7 +30,7 @@ from .contracts import MAX_FIXTURE_DIMENSIONS, MAX_MEMORY_COUNT, MAX_RECORD_CHAR
 from .dataset import MemoryRecord
 
 _TOKEN = re.compile(r"[a-z0-9_]+")
-_INGEST_EPOCH = datetime(2030, 1, 1, tzinfo=timezone.utc)
+INGEST_EPOCH = datetime(2030, 1, 1, tzinfo=timezone.utc)
 
 
 @dataclass(frozen=True)
@@ -56,6 +56,15 @@ class Retriever(Protocol):
     def recall(self, text: str, *, top_k: int) -> Retrieval: ...
 
     def feedback(self, retrieval: Retrieval, *, positive: bool) -> None: ...
+
+    def advance_to(self, moment: datetime) -> None:
+        """Move the retriever's clock, so the harness can simulate elapsed time.
+
+        A no-op for time-invariant retrievers. Implemented explicitly by each
+        retriever rather than probed for, so a new implementation has to make a
+        deliberate choice about time.
+        """
+        ...
 
     def close(self) -> None: ...
 
@@ -90,6 +99,10 @@ class FixtureRetriever:
     def feedback(self, retrieval: Retrieval, *, positive: bool) -> None:
         if not isinstance(retrieval, Retrieval) or not isinstance(positive, bool):
             raise TypeError("feedback requires a Retrieval and boolean positive value")
+
+    def advance_to(self, moment: datetime) -> None:
+        # Time-invariant: no learning, no decay, so the clock cannot matter.
+        del moment
 
     def close(self) -> None:
         return
@@ -145,6 +158,9 @@ class SynapticRetriever:
         )
         self._benchmark_ids: dict[UUID, str] = {}
         self._ingested = False
+        # None means "use the wall clock", which is how every record predating
+        # the harness clock was produced. advance_to opts into simulated time.
+        self._now: datetime | None = None
 
     def ingest(self, memories: Sequence[MemoryRecord], *, seed: int) -> None:
         del seed
@@ -155,7 +171,7 @@ class SynapticRetriever:
         if len({memory.benchmark_id for memory in memories}) != len(memories):
             raise ValueError("synaptic memory IDs must be unique")
         for record in memories:
-            created_at = _INGEST_EPOCH + timedelta(seconds=record.ingest_offset_seconds)
+            created_at = INGEST_EPOCH + timedelta(seconds=record.ingest_offset_seconds)
             memory = self._memory._remember_at(record.content, record.metadata, created_at)
             self._benchmark_ids[memory.id] = record.benchmark_id
         if len(self._benchmark_ids) != len(memories):
@@ -165,7 +181,10 @@ class SynapticRetriever:
     def recall(self, text: str, *, top_k: int) -> Retrieval:
         if not self._ingested:
             raise RuntimeError("synaptic retriever must be ingested before recall")
-        result = self._memory.recall(text, top_k=top_k)
+        if self._now is None:
+            result = self._memory.recall(text, top_k=top_k)
+        else:
+            result = self._memory._recall_at(text, top_k, None, self._now)
         try:
             ranked = tuple(self._benchmark_ids[item.memory.id] for item in result.memories)
         except KeyError as exc:
@@ -202,7 +221,24 @@ class SynapticRetriever:
             raise TypeError("feedback requires a Retrieval and boolean positive value")
         if retrieval.query_id is None:
             raise RuntimeError("synaptic feedback requires a retrieval carrying its query_id")
-        self._memory.feedback(UUID(retrieval.query_id), positive=positive)
+        query_id = UUID(retrieval.query_id)
+        if self._now is None:
+            self._memory.feedback(query_id, positive=positive)
+            return
+        self._memory._feedback_at(query_id, positive, self._now)
+
+    def advance_to(self, moment: datetime) -> None:
+        """Set the instant this retriever reads and writes the graph at.
+
+        Until this is called the retriever uses the wall clock, which is what
+        reproduces every record taken before the harness had a clock.
+        """
+        if not isinstance(moment, datetime) or moment.tzinfo is None:
+            raise ValueError("advance_to requires an aware datetime")
+        current = moment.astimezone(timezone.utc)
+        if self._now is not None and current < self._now:
+            raise ValueError("the benchmark clock only moves forward")
+        self._now = current
 
     def close(self) -> None:
         self._memory.close()

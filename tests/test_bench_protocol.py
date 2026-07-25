@@ -1,11 +1,12 @@
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
-from bench.contracts import MAX_SEED_COUNT
-from bench.dataset import MemoryRecord, load_dataset
-from bench.protocol import run_benchmark
+from bench.contracts import MAX_SEED_COUNT, MAX_SIMULATED_DAYS
+from bench.dataset import BenchmarkDataset, MemoryRecord, load_dataset
+from bench.protocol import Timeline, run_benchmark
 from bench.reporting import render_markdown, write_report
 from bench.retrievers import FixtureRetriever, Retrieval, _dot, _fixture_embedding
 
@@ -20,12 +21,15 @@ class ScriptedRetriever:
         self.feedback_count = 0
         self.feedback_values: list[bool] = []
         self.closed = False
+        self.recalls: list[str] = []
+        self.advances: list[datetime] = []
 
     def ingest(self, memories: Sequence[MemoryRecord], *, seed: int) -> None:
         del seed
         self.ingested = memories
 
     def recall(self, text: str, *, top_k: int) -> Retrieval:
+        self.recalls.append(text)
         result = self.results.get(text, Retrieval(()))
         return Retrieval(result.ranked_ids[:top_k], result.path_benchmark_ids, result.query_id)
 
@@ -33,6 +37,9 @@ class ScriptedRetriever:
         del retrieval
         self.feedback_count += 1
         self.feedback_values.append(positive)
+
+    def advance_to(self, moment: datetime) -> None:
+        self.advances.append(moment)
 
     def close(self) -> None:
         self.closed = True
@@ -49,6 +56,114 @@ def test_smoke_benchmark_runs_end_to_end_without_model_dependencies() -> None:
     assert report.passed
     assert len(report.runs[0].queries) == 10
     assert "| 1337 |" in render_markdown(report)
+
+
+def _smoke() -> BenchmarkDataset:
+    return load_dataset(ROOT / "bench/data/smoke", expected_counts=(50, 5, 5))
+
+
+def test_no_measurement_requested_leaves_the_clock_untouched() -> None:
+    dataset = _smoke()
+    baseline = ScriptedRetriever("baseline", {})
+    candidate = ScriptedRetriever("candidate", {})
+    report = run_benchmark(
+        dataset,
+        baseline_factory=lambda: baseline,
+        candidate_factory=lambda: candidate,
+        required_unique_wins=0,
+    )
+    # Default behaviour must stay exactly what every pre-clock record used.
+    assert baseline.advances == []
+    assert candidate.advances == []
+    assert report.runs[0].measurements == ()
+
+
+def test_trajectory_scores_a_cold_instance_that_is_never_warmed() -> None:
+    dataset = _smoke()
+    built: list[ScriptedRetriever] = []
+
+    def candidate_factory() -> ScriptedRetriever:
+        retriever = ScriptedRetriever("candidate", {})
+        built.append(retriever)
+        return retriever
+
+    run_benchmark(
+        dataset,
+        baseline_factory=lambda: ScriptedRetriever("baseline", {}),
+        candidate_factory=candidate_factory,
+        required_unique_wins=0,
+        measures=frozenset({"trajectory"}),
+    )
+
+    warm, cold = built[0], built[1]
+    # The cold instance answers the holdout only: no warm-up, no feedback.
+    assert cold.feedback_count == 0
+    assert warm.feedback_count == len(dataset.warmup)
+    assert len(cold.recalls) == len(dataset.queries)
+
+
+def test_trajectory_gate_fails_when_warming_loses_a_hit() -> None:
+    dataset = _smoke()
+    associative = [query for query in dataset.queries if query.label == "associative"]
+    target = associative[0]
+    answer = Retrieval((target.expected_ids[0],), target.intermediate_ids[:1], "q")
+    built: list[ScriptedRetriever] = []
+
+    def candidate_factory() -> ScriptedRetriever:
+        # The first instance built is the warm one and answers nothing; the
+        # second is cold and answers correctly, so warming loses a hit.
+        retriever = ScriptedRetriever("candidate", {} if not built else {target.text: answer})
+        built.append(retriever)
+        return retriever
+
+    report = run_benchmark(
+        dataset,
+        baseline_factory=lambda: ScriptedRetriever("baseline", {}),
+        candidate_factory=candidate_factory,
+        required_unique_wins=0,
+        measures=frozenset({"trajectory"}),
+    )
+
+    trajectory = report.runs[0].measurements[0]
+    assert trajectory.name == "trajectory"
+    assert (trajectory.before, trajectory.after) == (1, 0)
+    assert not trajectory.passed
+    assert not report.passed
+
+
+def test_measurement_rejects_an_unknown_name() -> None:
+    with pytest.raises(ValueError, match="unknown measurement"):
+        run_benchmark(
+            _smoke(),
+            baseline_factory=FixtureRetriever,
+            candidate_factory=FixtureRetriever,
+            required_unique_wins=0,
+            measures=frozenset({"vibes"}),
+        )
+
+
+def test_simulated_spans_are_bounded() -> None:
+    with pytest.raises(ValueError, match="between 0 and"):
+        Timeline(warmup_span_days=-1.0)
+    with pytest.raises(ValueError, match="between 0 and"):
+        Timeline(decay_probe_days=MAX_SIMULATED_DAYS + 1)
+
+
+def test_warmup_spreads_events_across_the_configured_span() -> None:
+    dataset = _smoke()
+    candidate = ScriptedRetriever("candidate", {})
+    run_benchmark(
+        dataset,
+        baseline_factory=lambda: ScriptedRetriever("baseline", {}),
+        candidate_factory=lambda: candidate,
+        required_unique_wins=0,
+        timeline=Timeline(warmup_span_days=30.0),
+    )
+    # Differing instants are the whole point: uniformly aged edges make decay a
+    # constant multiplier, which cannot reorder anything.
+    warmup_instants = candidate.advances[: len(dataset.warmup)]
+    assert len(set(warmup_instants)) > 1
+    assert warmup_instants == sorted(warmup_instants)
 
 
 def test_fixture_embeddings_are_deterministic() -> None:

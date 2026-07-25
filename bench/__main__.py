@@ -13,7 +13,7 @@ from synapticdb.learning import ParameterValue, default_parameters
 from .baseline import LockedBaseline
 from .contracts import MAX_SEED_COUNT, MAX_SEED_TEXT_CHARS, MAX_TOP_K
 from .dataset import load_dataset
-from .protocol import run_benchmark
+from .protocol import KNOWN_MEASURES, Timeline, run_benchmark
 from .reporting import render_markdown, write_report
 from .retrievers import FixtureRetriever, Retriever, SynapticRetriever, _fixture_embedding
 
@@ -45,6 +45,18 @@ def parse_args() -> argparse.Namespace:
         default=[],
         metavar="KEY=JSON",
         help="Override one PRD section 9 parameter, e.g. --param activation_blend_weight=0.9",
+    )
+    # Simulated time. All default to zero, which keeps the wall-clock behaviour
+    # every record before the harness clock was produced with.
+    parser.add_argument("--warmup-span-days", type=float, default=0.0)
+    parser.add_argument("--query-offset-days", type=float, default=0.0)
+    parser.add_argument("--decay-probe-days", type=float, default=0.0)
+    parser.add_argument(
+        "--measure",
+        action="append",
+        default=[],
+        choices=sorted(KNOWN_MEASURES),
+        help="Run a directional gate; repeatable",
     )
     return parser.parse_args()
 
@@ -135,6 +147,8 @@ def main() -> int:
         top_k=args.top_k,
         required_unique_wins=10 if args.profile == "full" and args.retriever != "baseline" else 0,
         expected_baseline_hits=(25, 10) if args.profile == "full" else None,
+        timeline=Timeline(args.warmup_span_days, args.query_offset_days, args.decay_probe_days),
+        measures=frozenset(args.measure),
     )
     print(render_markdown(report))
     if not args.no_write:

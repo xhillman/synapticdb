@@ -54,6 +54,43 @@ a time, prefer values with a mechanical reason to help, and treat a config that
 scores well without an explanation as a finding to investigate rather than a
 default to adopt.
 
+## Simulated time and the directional gates
+
+The harness can replay a run against a simulated clock, which is what makes
+decay, pruning, and usage effects observable at all. Every flag defaults to
+zero, and with all of them absent a run is identical to one taken before the
+clock existed.
+
+```bash
+python -m bench --profile full --retriever synaptic \
+  --warmup-span-days 30 --query-offset-days 7 --decay-probe-days 90 \
+  --measure trajectory --measure decay --measure diversity
+```
+
+Spans are measured **from the 2030 ingest epoch, not from today**. The epoch is
+in the future relative to wall-clock time, so a run without a clock leaves every
+edge future-dated and decay clamped to 1.0 — which is why v1 could never age a
+graph.
+
+Three gates, each asserting a relationship the PRD claims rather than a number
+we chose. Directional by design: a threshold picked today would be a guess, and
+a guessed threshold invites being renegotiated the moment it is missed.
+
+| measurement | claim under test |
+|---|---|
+| `trajectory` | using the system improves it: warm associative hits ≥ cold |
+| `decay` | an aged graph still serves search: aged direct hits ≥ warm |
+| `diversity` | learning does not collapse results: repeat distinct ≥ first |
+
+`trajectory` scores a **separate cold instance** rather than an earlier pass on
+the warm one, because recall itself writes co-retrieval edges — a first pass
+cannot be repeated as a clean baseline.
+
+**Phase A cannot measure co-retrieval or explicit feedback.** Both need a
+warm-up that traverses the same chains as the holdout, which needs the
+multi-query chains of Phase B. What Phase A adds is the ability to age a graph
+and to detect a collapse.
+
 Canonical results live in `bench/records/`, one directory per promoted run
 (`report.md` + `report.json`, stamped with the git commit of the code under
 test). `bench/artifacts/` is transient and gitignored; promote a run by

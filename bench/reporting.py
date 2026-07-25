@@ -13,6 +13,32 @@ from .protocol import BenchmarkReport
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
+_MEASUREMENT_CLAIMS = {
+    "trajectory": "using the system improves it: warm associative hits >= cold",
+    "diversity": "learning does not collapse the result set: repeat distinct >= first",
+    "decay_direct_recall": "an aged graph still serves search: aged direct >= warm",
+}
+
+
+def _render_measurements(report: BenchmarkReport) -> list[str]:
+    """Render the directional gates, each beside the claim it tests."""
+    if not any(run.measurements for run in report.runs):
+        return []
+    lines = [
+        "| Seed | Measurement | Before | After | Gate | Claim |",
+        "|---:|---|---:|---:|---|---|",
+    ]
+    for run in report.runs:
+        for measurement in run.measurements:
+            claim = _MEASUREMENT_CLAIMS.get(measurement.name, "")
+            lines.append(
+                f"| {run.seed} | {measurement.name} | {measurement.before} | {measurement.after} | "
+                f"{'PASS' if measurement.passed else 'FAIL'} | {claim} |"
+            )
+    lines.append("")
+    return lines
+
+
 def render_markdown(report: BenchmarkReport) -> str:
     _validate_report(report)
     decision = "PASS" if report.passed else "FAIL"
@@ -47,6 +73,7 @@ def render_markdown(report: BenchmarkReport) -> str:
             "",
         ]
     )
+    lines.extend(_render_measurements(report))
     if report.expected_baseline_hits is not None:
         direct, associative = report.expected_baseline_hits
         lines.insert(

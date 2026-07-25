@@ -6,6 +6,7 @@ import math
 import re
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from typing import Any
 
 from .contracts import (
@@ -140,6 +141,12 @@ class LockedBaseline:
     ) -> None:
         if not isinstance(retrieval, Retrieval) or not isinstance(positive, bool):
             raise TypeError("feedback requires a Retrieval and boolean positive value")
+
+    def advance_to(self, moment: datetime) -> None:
+        # The locked baseline has no state that ages, so the clock is inert.
+        # It must still accept one, or the baseline could not be compared
+        # against a candidate the harness is advancing through time.
+        del moment
 
     def close(self) -> None:
         self._ready = False
