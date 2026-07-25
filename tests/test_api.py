@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from typing import cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -228,6 +228,104 @@ def test_recall_reads_every_edge_at_one_instant() -> None:
         stored = memory._store.get_query(result.query_id)
         assert stored.created_at == started
         assert set(stored.energies) == {first.id, second.id}
+
+
+def _two_memory_recall(memory: Synaptic, started: datetime) -> tuple[UUID, UUID, UUID]:
+    first = memory._remember_at("alpha one", None, started)
+    second = memory._remember_at("alpha two", None, started + timedelta(seconds=601))
+    result = memory._recall_at("alpha", 10, None, started + timedelta(seconds=1200))
+    return first.id, second.id, result.query_id
+
+
+def test_positive_feedback_reinforces_the_edge_between_results() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        first_id, second_id, query_id = _two_memory_recall(memory, started)
+        before = memory._store.get_edge_between(first_id, second_id)
+        assert before is not None and before.weight == pytest.approx(0.05)
+
+        memory._feedback_at(query_id, True, started + timedelta(seconds=1200))
+        after = memory._store.get_edge_between(first_id, second_id)
+        assert after is not None
+        # Both results are fusion-only, so e_i = e_j = 1.0 and the update is
+        # the full 0.15 * (1 - w) on top of the co-retrieval edge.
+        assert after.weight == pytest.approx(0.05 + 0.15 * 0.95, rel=1e-3)
+        assert after.reinforcement_count == before.reinforcement_count + 1
+
+
+def test_negative_feedback_weakens_without_creating_edges() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        first_id, second_id, query_id = _two_memory_recall(memory, started)
+        before = memory._store.get_edge_between(first_id, second_id)
+        assert before is not None
+        edges_before = memory.stats().edges
+
+        memory._feedback_at(query_id, False, started + timedelta(seconds=1200))
+        after = memory._store.get_edge_between(first_id, second_id)
+        assert after is not None
+        assert after.weight == pytest.approx(before.weight * 0.85, rel=1e-3)
+        assert memory.stats().edges == edges_before
+
+
+def test_positive_feedback_creates_a_missing_result_pair_edge() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        first = memory._remember_at("alpha one", None, started)
+        second = memory._remember_at("alpha two", None, started + timedelta(seconds=601))
+        # A saved query without the co-retrieval pass, so no edge exists yet.
+        query = memory._store.save_query(
+            "alpha",
+            (first.id, second.id),
+            {first.id: 1.0, second.id: 0.4},
+            (),
+        )
+        assert memory._store.get_edge_between(first.id, second.id) is None
+
+        memory._feedback_at(query.id, True, started + timedelta(seconds=1200))
+        created = memory._store.get_edge_between(first.id, second.id)
+        assert created is not None
+        assert created.origin == "co_retrieval"
+        assert created.weight == pytest.approx(0.05 * 0.4)
+
+
+def test_repeated_feedback_raises_and_unknown_query_raises() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        _, _, query_id = _two_memory_recall(memory, started)
+        memory.feedback(query_id, positive=True)
+        with pytest.raises(InvalidArgumentError, match="already recorded"):
+            memory.feedback(query_id, positive=True)
+        with pytest.raises(NotFoundError):
+            memory.feedback(uuid4(), positive=True)
+
+
+def test_feedback_skips_pairs_whose_memory_was_forgotten() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        first_id, second_id, query_id = _two_memory_recall(memory, started)
+        memory.forget(second_id)
+        # The query row still names the forgotten memory; feedback must not
+        # raise, and must leave the survivor's own edges alone.
+        memory.feedback(query_id, positive=True)
+        assert memory._store.get_memory(first_id).id == first_id
+        assert memory.stats().edges == 0
+
+
+def test_recall_persists_energies_for_activated_non_results() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        anchor = memory._remember_at("alpha anchor", None, started)
+        hidden = memory._remember_at("delta hidden", None, started + timedelta(seconds=601))
+        memory._store.insert_edge(anchor.id, hidden.id, 1.0, "explicit")
+
+        result = memory._recall_at("alpha", 1, None, started + timedelta(seconds=1200))
+        stored = memory._store.get_query(result.query_id)
+        # top_k=1 returns only the anchor, but activation energized `hidden`,
+        # and feedback on the path edge needs both endpoint energies.
+        assert [item.memory.id for item in result.memories] == [anchor.id]
+        assert hidden.id in stored.energies
+        assert stored.energies[hidden.id] == pytest.approx(0.8)
 
 
 def test_where_filter_requires_present_equal_metadata() -> None:

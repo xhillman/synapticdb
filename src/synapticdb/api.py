@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
@@ -25,10 +26,14 @@ from synapticdb.learning import (
     co_retrieval_pairs,
     decay_config,
     default_parameters,
+    feedback_rate,
+    negative_feedback_weight,
     passive_reinforcement_rate,
+    positive_feedback_seed,
     semantic_seed_config,
     semantic_seed_ids,
     temporal_link_config,
+    unordered_pairs,
 )
 from synapticdb.models import InvalidArgumentError, Memory, Recalled, RecallResult, Stats
 from synapticdb.retrieval import (
@@ -37,11 +42,32 @@ from synapticdb.retrieval import (
     min_max_normalize,
     reciprocal_rank_fusion,
 )
-from synapticdb.store import CANDIDATE_LIMIT, EdgeSeed, GraphSummary, PairSeed, Store
+from synapticdb.store import (
+    CANDIDATE_LIMIT,
+    Edge,
+    EdgeSeed,
+    GraphSummary,
+    PairSeed,
+    QueryRow,
+    Store,
+)
 
 _MAX_FILTER_KEYS = 64
 _MAX_TEXT_CHARS = 1_000_000
 _MAX_TOP_K = 100
+# Result pairs are bounded by top_k, but a query row's path_edge_ids is not, so
+# feedback needs its own ceiling. C(100, 2) covers every pair a maximal recall
+# can produce; anything past that is a corrupt or hand-built query row.
+_MAX_FEEDBACK_EDGES = _MAX_TOP_K * (_MAX_TOP_K - 1) // 2
+
+
+@dataclass(frozen=True, slots=True)
+class _FeedbackTarget:
+    """One edge feedback will update, with its row when already loaded."""
+
+    first_id: UUID
+    second_id: UUID
+    edge: Edge | None
 
 
 class Synaptic:
@@ -155,7 +181,7 @@ class Synaptic:
         embedding = self._embedder.embed(text)
         ranked, activation, maturity = self._rank_candidates(text, embedding, now)
         selected_ids, selected = self._select_results(ranked, filters, result_limit)
-        energies = _result_energies(selected_ids, activation)
+        energies = _recall_energies(selected_ids, activation)
         pair_seeds = self._co_retrieval_seeds(selected_ids)
         query_row, memories = self._store.record_recall(
             text,
@@ -255,6 +281,97 @@ class Synaptic:
         identifiers = tuple(selected_ids)
         return identifiers, {memory_id: hits_by_id[memory_id] for memory_id in identifiers}
 
+    def feedback(self, query_id: UUID, *, positive: bool = True) -> None:
+        """Apply explicit feedback for one recall (PRD §6.6).
+
+        Positive feedback strengthens — and may create — the edges among the
+        results and along the association paths that produced them. Negative
+        feedback weakens the same edges without creating any.
+        """
+        self._feedback_at(query_id, positive, datetime.now(timezone.utc))
+
+    def _feedback_at(self, query_id: UUID, positive: bool, now: datetime) -> None:
+        """Apply feedback against a single read time, as recall does."""
+        self._require_open()
+        if not isinstance(query_id, UUID):
+            raise InvalidArgumentError("query_id must be a UUID")
+        if not isinstance(positive, bool):
+            raise InvalidArgumentError("positive must be a boolean")
+        query = self._store.get_query(query_id)
+        pairs = self._feedback_pairs(query, now)
+        rate = feedback_rate(self._params)
+        seeds, updates = self._feedback_updates(pairs, query.energies, rate, positive, now)
+        self._store.apply_feedback(
+            query_id,
+            1 if positive else -1,
+            pair_seeds=seeds,
+            weight_updates=updates,
+            reinforced_at=now,
+            half_life_days=self._half_life_days(),
+        )
+        self._confidence.invalidate()
+
+    def _feedback_pairs(self, query: QueryRow, now: datetime) -> tuple[_FeedbackTarget, ...]:
+        """Return one target per distinct edge among the results and paths.
+
+        A query row outlives the memories it names, so pair only the results
+        that still exist: feedback on a partly forgotten recall applies to what
+        remains rather than failing.
+        """
+        targets: dict[frozenset[UUID], _FeedbackTarget] = {}
+        surviving = self._store.existing_memory_ids(query.result_ids)
+        for first_id, second_id in unordered_pairs(surviving):
+            targets[frozenset((first_id, second_id))] = _FeedbackTarget(first_id, second_id, None)
+        path_edges = self._store.edges_by_ids(
+            query.path_edge_ids,
+            half_life_days=self._half_life_days(),
+            now=now,
+        )
+        # A path edge can also be a result pair; PRD §6.6 updates each edge, so
+        # the later entry replaces the earlier one and carries its known weight.
+        for edge in path_edges:
+            targets[frozenset((edge.a, edge.b))] = _FeedbackTarget(edge.a, edge.b, edge)
+        if len(targets) > _MAX_FEEDBACK_EDGES:
+            raise InvalidArgumentError(f"feedback touches at most {_MAX_FEEDBACK_EDGES} edges")
+        return tuple(targets.values())
+
+    def _feedback_updates(
+        self,
+        targets: Sequence[_FeedbackTarget],
+        energies: Mapping[UUID, float],
+        rate: float,
+        positive: bool,
+        now: datetime,
+    ) -> tuple[tuple[PairSeed, ...], tuple[tuple[str, float], ...]]:
+        """Split targets into positive create-or-reinforce seeds and negative rewrites."""
+        seeds: list[PairSeed] = []
+        updates: list[tuple[str, float]] = []
+        for target in targets:
+            first = energies.get(target.first_id)
+            second = energies.get(target.second_id)
+            if first is None or second is None:
+                # The memory was forgotten after the recall; nothing to weight.
+                continue
+            if positive:
+                weight, reinforce_rate = positive_feedback_seed(first, second, rate)
+                seeds.append(
+                    PairSeed(target.first_id, target.second_id, weight, "co_retrieval", reinforce_rate)
+                )
+                continue
+            # Read at `now`, so the weakening builds on the weight this
+            # feedback saw rather than one decayed to the wall clock.
+            edge = target.edge or self._store.get_edge_between(
+                target.first_id,
+                target.second_id,
+                half_life_days=self._half_life_days(),
+                now=now,
+            )
+            if edge is None:
+                # Negative feedback never creates an edge (PRD §6.6).
+                continue
+            updates.append((edge.id, negative_feedback_weight(edge.effective_weight, first, second, rate)))
+        return tuple(seeds), tuple(updates)
+
     def forget(self, memory_id: UUID) -> None:
         self._require_open()
         if not isinstance(memory_id, UUID):
@@ -347,9 +464,19 @@ def _metadata_matches(metadata: Mapping[str, object], filters: Mapping[str, obje
     return all(key in metadata and metadata[key] == value for key, value in filters.items())
 
 
-def _result_energies(
+def _recall_energies(
     result_ids: Sequence[UUID],
     activation: ActivationResult,
 ) -> dict[UUID, float]:
-    activation_energies = {hit.memory_id: hit.energy for hit in activation.hits}
-    return {memory_id: activation_energies.get(memory_id, 1.0) for memory_id in result_ids}
+    """Return the energies feedback (PRD §6.6) needs to weight its updates.
+
+    Covers every result — 1.0 where activation never reached one — and every
+    activated node besides. Activation records a path edge only after
+    energizing both of its endpoints, so storing the activated nodes is what
+    makes `e_i · e_j` defined for a path edge whose endpoint the top-k
+    ranking left out.
+    """
+    energies = {hit.memory_id: hit.energy for hit in activation.hits}
+    for memory_id in result_ids:
+        energies.setdefault(memory_id, 1.0)
+    return energies

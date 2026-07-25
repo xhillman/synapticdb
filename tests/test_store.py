@@ -520,6 +520,69 @@ def test_recall_rejects_repeated_and_oversized_pair_seeds(store: Store) -> None:
         store.record_recall("q", (first_id,), {first_id: 1.0}, (), pair_seeds=too_many)
 
 
+def test_apply_feedback_writes_edges_and_the_flag_together(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    query = store.save_query("q", (first_id, second_id), {first_id: 1.0, second_id: 1.0}, ())
+
+    updated = store.apply_feedback(
+        query.id,
+        1,
+        pair_seeds=(PairSeed(first_id, second_id, 0.05, "co_retrieval", 0.15),),
+    )
+    assert updated.feedback == 1
+    edge = store.get_edge_between(first_id, second_id)
+    assert edge is not None
+    assert edge.weight == pytest.approx(0.05)
+
+
+def test_apply_feedback_rolls_back_the_flag_when_an_edge_write_fails(store: Store) -> None:
+    memory_id = remember(store, "first")
+    query = store.save_query("q", (memory_id,), {memory_id: 1.0}, ())
+    with pytest.raises(NotFoundError):
+        store.apply_feedback(
+            query.id,
+            1,
+            pair_seeds=(PairSeed(memory_id, uuid4(), 0.05, "co_retrieval", 0.15),),
+        )
+    # The query must stay answerable: a recorded flag with no edges would make
+    # the retry path raise "already recorded" and lose the signal entirely.
+    assert store.get_query(query.id).feedback is None
+    assert store.graph_summary().edge_count == 0
+
+
+def test_repeated_feedback_raises_without_applying_a_second_update(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    query = store.save_query("q", (first_id, second_id), {first_id: 1.0, second_id: 1.0}, ())
+    seeds = (PairSeed(first_id, second_id, 0.05, "co_retrieval", 0.15),)
+    store.apply_feedback(query.id, 1, pair_seeds=seeds)
+    first_edge = store.get_edge_between(first_id, second_id)
+    assert first_edge is not None
+
+    with pytest.raises(InvalidArgumentError, match="already recorded"):
+        store.apply_feedback(query.id, 1, pair_seeds=seeds)
+
+    unchanged = store.get_edge_between(first_id, second_id)
+    assert unchanged is not None
+    assert unchanged.weight == pytest.approx(first_edge.weight)
+    assert unchanged.reinforcement_count == first_edge.reinforcement_count
+
+
+def test_apply_feedback_rejects_an_unknown_query(store: Store) -> None:
+    with pytest.raises(NotFoundError):
+        store.apply_feedback(uuid4(), 1)
+
+
+def test_edges_by_ids_skips_rows_that_no_longer_exist(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    edge = store.insert_edge(first_id, second_id, 0.3, "semantic")
+    assert [found.id for found in store.edges_by_ids((edge.id, "missing"))] == [edge.id]
+    store.forget_memory(first_id)
+    assert store.edges_by_ids((edge.id,)) == ()
+
+
 def test_query_validation_rejects_incomplete_data(store: Store) -> None:
     memory_id = remember(store, "first")
     with pytest.raises(InvalidArgumentError, match="missing energy"):

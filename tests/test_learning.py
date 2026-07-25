@@ -16,11 +16,15 @@ from synapticdb.learning import (
     decayed_weight,
     default_parameters,
     effective_weight,
+    feedback_rate,
+    negative_feedback_weight,
     passive_reinforcement_rate,
+    positive_feedback_seed,
     reinforce_weight,
     semantic_seed_config,
     semantic_seed_ids,
     temporal_link_config,
+    unordered_pairs,
 )
 
 
@@ -103,6 +107,45 @@ def test_co_retrieval_pairs_reject_repeated_results() -> None:
     repeated = uuid4()
     with pytest.raises(InvalidArgumentError, match="unique"):
         co_retrieval_pairs((repeated, repeated))
+
+
+def test_feedback_rate_reads_the_specified_value() -> None:
+    assert feedback_rate(default_parameters()) == 0.15
+
+
+def test_positive_feedback_scales_by_the_energy_product() -> None:
+    weight, rate = positive_feedback_seed(1.0, 1.0, 0.15)
+    assert (weight, rate) == pytest.approx((0.05, 0.15))
+    faint_weight, faint_rate = positive_feedback_seed(0.5, 0.4, 0.15)
+    assert faint_rate == pytest.approx(0.15 * 0.2)
+    # 0.05 * 0.2 = 0.01 would be born below the 0.02 prune threshold.
+    assert faint_weight == pytest.approx(0.02)
+
+
+def test_negative_feedback_shrinks_by_the_energy_product() -> None:
+    assert negative_feedback_weight(0.4, 1.0, 1.0, 0.15) == pytest.approx(0.34)
+    assert negative_feedback_weight(0.4, 0.5, 0.4, 0.15) == pytest.approx(0.4 * (1 - 0.03))
+
+
+def test_negative_feedback_never_crosses_zero() -> None:
+    weight = 1.0
+    for _ in range(200):
+        weight = negative_feedback_weight(weight, 1.0, 1.0, 0.15)
+    assert 0.0 < weight < 1e-12
+
+
+def test_feedback_arithmetic_rejects_out_of_range_energies() -> None:
+    with pytest.raises(InvalidArgumentError, match="energy"):
+        positive_feedback_seed(1.5, 1.0, 0.15)
+    with pytest.raises(InvalidArgumentError, match="energy"):
+        negative_feedback_weight(0.4, -0.1, 1.0, 0.15)
+
+
+def test_unordered_pairs_covers_every_result_for_feedback() -> None:
+    ids = tuple(uuid4() for _ in range(6))
+    # Feedback pairs every result, unlike co-retrieval's top-five slice.
+    assert len(unordered_pairs(ids)) == 15
+    assert len(co_retrieval_pairs(ids)) == 10
 
 
 def test_decay_config_reads_the_specified_half_life_and_threshold() -> None:

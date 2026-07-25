@@ -27,6 +27,8 @@ _EDGE_LOOKUP_LIMIT = 400
 _MEMORY_EDGE_LIMIT = 80
 # PRD §6.3 pairs the top 5 results of a recall, so C(5, 2) = 10 edges.
 _RECALL_EDGE_LIMIT = 10
+# PRD §6.6 pairs *every* result, so a maximal top_k of 100 gives C(100, 2).
+_FEEDBACK_EDGE_LIMIT = 4950
 _EXPIRE_BATCH_LIMIT = 1000
 _QUERY_TOKEN_LIMIT = 64
 _TEMPORAL_LINK_LIMIT = 40
@@ -605,29 +607,33 @@ class Store:
         Edge.weight: this method stores exactly what it is given.
         """
         self._require_open()
-        prepared = tuple((edge_id, _unit_float(weight, "weight")) for edge_id, weight in updates)
-        if not all(isinstance(edge_id, str) and edge_id for edge_id, _ in prepared):
-            raise InvalidArgumentError("edge ids must be non-empty strings")
-        if len({edge_id for edge_id, _ in prepared}) != len(prepared):
-            raise InvalidArgumentError("edge updates must not contain duplicate ids")
+        prepared = _prepare_weight_updates(updates)
         if not prepared:
             return ()
         timestamp = _require_utc(reinforced_at or _utc_now(), "reinforced_at")
         with self._connection:
-            for edge_id, weight in prepared:
-                cursor = self._connection.execute(
-                    """
-                    UPDATE edges
-                    SET weight = ?, last_reinforced_at = ?,
-                        reinforcement_count = reinforcement_count + 1
-                    WHERE id = ?
-                    """,
-                    (weight, timestamp.isoformat(), edge_id),
-                )
-                if cursor.rowcount != 1:
-                    raise NotFoundError(f"unknown edge_id: {edge_id}")
+            self._write_weight_updates(prepared, timestamp)
             rows = self._edge_rows_by_ids(tuple(edge_id for edge_id, _ in prepared))
         return tuple(_edge_from_row(row, half_life_days, timestamp) for row in rows)
+
+    def _write_weight_updates(
+        self,
+        updates: Sequence[tuple[str, float]],
+        timestamp: datetime,
+    ) -> None:
+        """Store each weight and reset its decay clock, inside the caller's transaction."""
+        for edge_id, weight in updates:
+            cursor = self._connection.execute(
+                """
+                UPDATE edges
+                SET weight = ?, last_reinforced_at = ?,
+                    reinforcement_count = reinforcement_count + 1
+                WHERE id = ?
+                """,
+                (weight, timestamp.isoformat(), edge_id),
+            )
+            if cursor.rowcount != 1:
+                raise NotFoundError(f"unknown edge_id: {edge_id}")
 
     def save_query(
         self,
@@ -666,7 +672,7 @@ class Store:
         self._require_open()
         timestamp = _require_utc(recorded_at or _utc_now(), "recorded_at")
         prepared = _prepare_query(text, result_ids, energies, path_edge_ids, query_id, timestamp)
-        seeds = _prepare_pair_seeds(pair_seeds)
+        seeds = _prepare_pair_seeds(pair_seeds, _RECALL_EDGE_LIMIT)
         identifiers = prepared.result_ids
         with self._connection:
             self._require_memory_ids(identifiers)
@@ -706,14 +712,99 @@ class Store:
         self._require_open()
         return _query_from_row(self._required_query_row(query_id))
 
+    def existing_memory_ids(self, memory_ids: Sequence[UUID]) -> tuple[UUID, ...]:
+        """Return the subset of IDs still present, preserving the caller's order.
+
+        Unlike get_memories, a missing ID is not an error: a query row outlives
+        the memories it names, and forget() may have removed one since.
+        """
+        self._require_open()
+        identifiers = _uuid_texts(memory_ids, "memory_ids")
+        if not identifiers:
+            return ()
+        placeholders = ",".join("?" for _ in identifiers)
+        rows = self._connection.execute(
+            f"SELECT id FROM memories WHERE id IN ({placeholders})",
+            identifiers,
+        ).fetchall()
+        present = {row["id"] for row in rows}
+        return tuple(UUID(identifier) for identifier in identifiers if identifier in present)
+
+    def edges_by_ids(
+        self,
+        edge_ids: Sequence[str],
+        *,
+        half_life_days: float = DEFAULT_HALF_LIFE_DAYS,
+        now: datetime | None = None,
+    ) -> tuple[Edge, ...]:
+        """Return the edges that still exist, skipping any that do not.
+
+        Unlike get_edge, a missing row is not an error: a query row records the
+        path edges it traversed, and forget() may have cascaded one away before
+        the caller acts on that record.
+        """
+        self._require_open()
+        identifiers = _string_ids(edge_ids, "edge_ids")
+        if not identifiers:
+            return ()
+        read_time = _require_utc(now or _utc_now(), "now")
+        placeholders = ",".join("?" for _ in identifiers)
+        rows = self._connection.execute(
+            f"SELECT * FROM edges WHERE id IN ({placeholders})",
+            identifiers,
+        ).fetchall()
+        by_id = {row["id"]: row for row in rows}
+        return tuple(
+            _edge_from_row(by_id[edge_id], half_life_days, read_time) for edge_id in identifiers if edge_id in by_id
+        )
+
+    def apply_feedback(
+        self,
+        query_id: UUID,
+        feedback: FeedbackValue,
+        *,
+        pair_seeds: Sequence[PairSeed] = (),
+        weight_updates: Sequence[tuple[str, float]] = (),
+        reinforced_at: datetime | None = None,
+        half_life_days: float = DEFAULT_HALF_LIFE_DAYS,
+    ) -> QueryRow:
+        """Record explicit feedback and its edge updates in one transaction.
+
+        Either the graph learns from the feedback and the query is marked as
+        answered, or neither happens: a partially applied update would let a
+        second call re-apply the surviving half.
+        """
+        self._require_open()
+        if feedback not in (-1, 1):
+            raise InvalidArgumentError("feedback must be -1 or 1")
+        seeds = _prepare_pair_seeds(pair_seeds, _FEEDBACK_EDGE_LIMIT)
+        updates = _prepare_weight_updates(weight_updates)
+        if len(updates) > _FEEDBACK_EDGE_LIMIT:
+            raise InvalidArgumentError(f"this write accepts at most {_FEEDBACK_EDGE_LIMIT} edges")
+        timestamp = _require_utc(reinforced_at or _utc_now(), "reinforced_at")
+        with self._connection:
+            self._require_unanswered_query(query_id)
+            self._write_pair_seeds(seeds, timestamp, half_life_days)
+            self._write_weight_updates(updates, timestamp)
+            self._connection.execute(
+                "UPDATE queries SET feedback = ? WHERE id = ?",
+                (feedback, str(query_id)),
+            )
+            updated = self._required_query_row(query_id)
+        return _query_from_row(updated)
+
+    def _require_unanswered_query(self, query_id: UUID) -> sqlite3.Row:
+        row = self._required_query_row(query_id)
+        if row["feedback"] is not None:
+            raise InvalidArgumentError(f"feedback already recorded for query_id: {query_id}")
+        return row
+
     def set_query_feedback(self, query_id: UUID, feedback: FeedbackValue) -> QueryRow:
         self._require_open()
         if feedback not in (-1, 1):
             raise InvalidArgumentError("feedback must be -1 or 1")
         with self._connection:
-            row = self._required_query_row(query_id)
-            if row["feedback"] is not None:
-                raise InvalidArgumentError(f"feedback already recorded for query_id: {query_id}")
+            self._require_unanswered_query(query_id)
             self._connection.execute(
                 "UPDATE queries SET feedback = ? WHERE id = ?",
                 (feedback, str(query_id)),
@@ -929,10 +1020,19 @@ def _prepare_metadata(metadata: Mapping[str, object]) -> str:
     return _encode_json(dict(metadata), "metadata")
 
 
-def _prepare_pair_seeds(pair_seeds: Sequence[PairSeed]) -> tuple[PairSeed, ...]:
+def _prepare_weight_updates(updates: Sequence[tuple[str, float]]) -> tuple[tuple[str, float], ...]:
+    prepared = tuple((edge_id, _unit_float(weight, "weight")) for edge_id, weight in updates)
+    if not all(isinstance(edge_id, str) and edge_id for edge_id, _ in prepared):
+        raise InvalidArgumentError("edge ids must be non-empty strings")
+    if len({edge_id for edge_id, _ in prepared}) != len(prepared):
+        raise InvalidArgumentError("edge updates must not contain duplicate ids")
+    return prepared
+
+
+def _prepare_pair_seeds(pair_seeds: Sequence[PairSeed], limit: int) -> tuple[PairSeed, ...]:
     seeds = tuple(pair_seeds)
-    if len(seeds) > _RECALL_EDGE_LIMIT:
-        raise InvalidArgumentError(f"one recall writes at most {_RECALL_EDGE_LIMIT} edges")
+    if len(seeds) > limit:
+        raise InvalidArgumentError(f"this write accepts at most {limit} edges")
     if not all(isinstance(seed, PairSeed) for seed in seeds):
         raise InvalidArgumentError("pair seeds must be PairSeed values")
     endpoints = tuple((seed.first_id, seed.second_id) for seed in seeds)

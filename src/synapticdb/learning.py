@@ -23,6 +23,12 @@ _SECONDS_PER_DAY = 86_400.0
 # one bounds what a recall learns, the other bounds where activation starts.
 CO_RETRIEVAL_RESULT_COUNT = 5
 
+# PRD §6.6: positive feedback creates a missing edge at 0.05·e_i·e_j, never
+# below 0.02 — the same value §6.5 prunes at, so a created edge starts at or
+# above the survival line rather than being born already collectable.
+_CO_RETRIEVAL_SEED_WEIGHT = 0.05
+_FEEDBACK_EDGE_FLOOR = 0.02
+
 # Calibration values for semantic seeding (PRD §6.1 / §9 group 11). Semantic
 # seeding is DISABLED by default (see default_parameters): the full-corpus
 # benchmark showed it contributes +0 associative unique wins at every threshold
@@ -126,6 +132,14 @@ def co_retrieval_config(params: Mapping[str, ParameterValue]) -> CoRetrievalConf
     return CoRetrievalConfig(initial_weight, reinforcement_rate)
 
 
+def feedback_rate(params: Mapping[str, ParameterValue]) -> float:
+    """Read and validate the explicit feedback rate."""
+    value = params.get("feedback_rate")
+    if isinstance(value, tuple) or value is None:
+        raise InvalidArgumentError("feedback_rate must be a single number")
+    return _unit_float(value, "feedback rate")
+
+
 def passive_reinforcement_rate(params: Mapping[str, ParameterValue]) -> float:
     """Return the passive reinforcement rate shared by learning mechanisms."""
     return co_retrieval_config(params).reinforcement_rate
@@ -151,17 +165,13 @@ def semantic_seed_ids(
     return tuple(selected)
 
 
-def co_retrieval_pairs(result_ids: Sequence[UUID]) -> tuple[tuple[UUID, UUID], ...]:
-    """Return every unordered pair among the top results of one recall.
-
-    Bounded by construction: at most CO_RETRIEVAL_RESULT_COUNT results produce
-    at most 10 pairs, so a recall can never write an unbounded number of edges.
-    """
-    selected = tuple(result_ids)[:CO_RETRIEVAL_RESULT_COUNT]
+def unordered_pairs(memory_ids: Sequence[UUID]) -> tuple[tuple[UUID, UUID], ...]:
+    """Return every unordered pair among unique memory IDs, in a stable order."""
+    selected = tuple(memory_ids)
     if not all(isinstance(memory_id, UUID) for memory_id in selected):
-        raise InvalidArgumentError("result IDs must be UUID values")
+        raise InvalidArgumentError("memory IDs must be UUID values")
     if len(set(selected)) != len(selected):
-        raise InvalidArgumentError("result IDs must be unique")
+        raise InvalidArgumentError("memory IDs must be unique")
     pairs: list[tuple[UUID, UUID]] = []
     for first_index, first_id in enumerate(selected):
         for second_id in selected[first_index + 1 :]:
@@ -169,11 +179,62 @@ def co_retrieval_pairs(result_ids: Sequence[UUID]) -> tuple[tuple[UUID, UUID], .
     return tuple(pairs)
 
 
+def co_retrieval_pairs(result_ids: Sequence[UUID]) -> tuple[tuple[UUID, UUID], ...]:
+    """Return every unordered pair among the top results of one recall.
+
+    Bounded by construction: slicing before pairing means at most
+    CO_RETRIEVAL_RESULT_COUNT results yield at most 10 pairs, whatever the
+    caller passes.
+    """
+    return unordered_pairs(tuple(result_ids)[:CO_RETRIEVAL_RESULT_COUNT])
+
+
 def reinforce_weight(weight: float, rate: float) -> float:
     """Return one passive reinforcement update."""
     stored_weight = _unit_float(weight, "edge weight")
     reinforcement_rate = _unit_float(rate, "reinforcement rate")
     return stored_weight + reinforcement_rate * (1.0 - stored_weight)
+
+
+def positive_feedback_seed(
+    first_energy: float,
+    second_energy: float,
+    rate: float,
+) -> tuple[float, float]:
+    """Return the (initial weight, reinforcement rate) for one positive update.
+
+    PRD §6.6 creates a missing edge at 0.05·e_i·e_j with a 0.02 floor, and
+    reinforces an existing one by rate·e_i·e_j·(1-w). Passing the second value
+    as a PairSeed reinforce_rate produces that update exactly.
+    """
+    scale = _energy_product(first_energy, second_energy)
+    reinforcement_rate = _unit_float(rate, "feedback rate") * scale
+    initial_weight = max(_FEEDBACK_EDGE_FLOOR, _CO_RETRIEVAL_SEED_WEIGHT * scale)
+    return initial_weight, reinforcement_rate
+
+
+def negative_feedback_weight(
+    weight: float,
+    first_energy: float,
+    second_energy: float,
+    rate: float,
+) -> float:
+    """Return the weakened weight for one negative update.
+
+    Callers pass the *effective* weight: like every other write path, negative
+    feedback builds on the decayed value rather than the stored one. The result
+    cannot go negative, since rate·e_i·e_j never exceeds the rate itself.
+    """
+    current = _unit_float(weight, "edge weight")
+    scale = _energy_product(first_energy, second_energy)
+    reduction = _unit_float(rate, "feedback rate") * scale
+    return current * (1.0 - reduction)
+
+
+def _energy_product(first_energy: float, second_energy: float) -> float:
+    first = _unit_float(first_energy, "energy")
+    second = _unit_float(second_energy, "energy")
+    return first * second
 
 
 def decayed_weight(weight: float, days_elapsed: float, half_life_days: float) -> float:

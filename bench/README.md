@@ -62,6 +62,7 @@ Phase 5 learning milestones are recorded separately:
 - `bench/records/phase5-2-temporal-proximity/`
 - `bench/records/phase5-3-decay/`
 - `bench/records/phase5-4-co-retrieval/`
+- `bench/records/phase5-5-feedback/`
 
 The Phase 5.2 record preserves 25/25 direct hits and 17/25 associative hits.
 Temporal proximity raises path-backed associative unique wins from 0/25 to
@@ -91,6 +92,21 @@ linked memories the fusion ranking had already returned together. Note this is a
 different failure from semantic seeding below: that mechanism duplicated what
 vector search already found, whereas co-retrieval's value case (repeated
 querying of the same topics) is simply absent from this corpus.
+
+The Phase 5.5 feedback record matches Phase 5.4 on every per-query outcome, for
+the same reason plus one more. The warm-up's 5 positive and 1 negative events
+grew co-retrieval edges from 60 to 235 and lifted average reinforcement from
+0.000 to 0.164, so the mechanism plainly runs — but on warm-up topics the
+holdout never traverses. Beyond that, a co-retrieval edge reinforced by one
+positive feedback reaches only `0.05 + 0.15·(1-0.05) = 0.1925`, still under the
+0.2 weight a temporal edge starts at, so even strengthened edges rank behind
+ordinary proximity links.
+
+**Any future harness change that lets feedback reach the holdout chains must
+not simply overlap warm-up with holdout.** That is train/test leakage, and the
+gate would stop measuring generalization. Exercising feedback honestly needs
+warm-up queries that are topically distinct yet traverse the same chains — a
+dataset design problem, not a parameter to tune.
 
 **Semantic seeding is disabled by default** (`_params["semantic_seed"] = None`).
 A full-corpus A/B and a threshold sweep showed it contributes +0 unique wins at

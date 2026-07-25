@@ -188,7 +188,9 @@ class SynapticRetriever:
     def feedback(self, retrieval: Retrieval, *, positive: bool) -> None:
         if not isinstance(retrieval, Retrieval) or not isinstance(positive, bool):
             raise TypeError("feedback requires a Retrieval and boolean positive value")
-        # Phase 3 intentionally has no learning. Warm-up feedback is a no-op.
+        if retrieval.query_id is None:
+            raise RuntimeError("synaptic feedback requires a retrieval carrying its query_id")
+        self._memory.feedback(UUID(retrieval.query_id), positive=positive)
 
     def close(self) -> None:
         self._memory.close()
