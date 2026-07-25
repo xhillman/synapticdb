@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Xavier Hillman" }]
+keywords = ["memory", "agents", "sqlite", "retrieval", "embeddings", "vector-search"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -23,6 +24,11 @@ dependencies = [
     "numpy>=1.24",
     "pydantic>=2,<3",
 ]
+
+[project.urls]
+Homepage = "https://github.com/xhillman/synapticdb"
+Repository = "https://github.com/xhillman/synapticdb"
+Issues = "https://github.com/xhillman/synapticdb/issues"
 
 [project.optional-dependencies]
 embeddings = [

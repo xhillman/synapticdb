@@ -221,4 +221,4 @@ imported as `synapticdb`.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/xhillman/synapticdb/blob/main/LICENSE).
