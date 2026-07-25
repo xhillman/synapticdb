@@ -346,6 +346,82 @@ def test_empty_database_recall_is_persisted_and_returns_no_results() -> None:
         assert memory.stats().memories == 0
 
 
+def test_connect_creates_the_only_user_authored_edge() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        first = memory._remember_at("alpha one", None, started)
+        # Outside the 600 s temporal window, so nothing links these two yet.
+        second = memory._remember_at("gamma two", None, started + timedelta(seconds=3600))
+        assert memory._store.get_edge_between(first.id, second.id) is None
+
+        memory._connect_at(first.id, second.id, started + timedelta(seconds=3600))
+        edge = memory._store.get_edge_between(first.id, second.id)
+        assert edge is not None
+        assert edge.origin == "explicit"
+        assert edge.weight == pytest.approx(0.5)
+        # Reading through stats() proves the confidence cache was invalidated.
+        assert memory.stats().edges_by_origin["explicit"] == 1
+
+
+def test_connect_claims_an_edge_the_graph_inferred() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        first = memory._remember_at("alpha one", None, started)
+        # Inside the window, so temporal proximity already linked them at 0.2.
+        second = memory._remember_at("gamma two", None, started + timedelta(seconds=60))
+        inferred = memory._store.get_edge_between(first.id, second.id)
+        assert inferred is not None and inferred.origin == "temporal"
+
+        memory._connect_at(first.id, second.id, started + timedelta(seconds=60))
+        claimed = memory._store.get_edge_between(first.id, second.id)
+        assert claimed is not None
+        assert claimed.origin == "explicit"
+        assert claimed.weight == pytest.approx(0.5)
+        assert memory.stats().edges_by_origin == {
+            "semantic": 0,
+            "temporal": 0,
+            "co_retrieval": 0,
+            "explicit": 1,
+        }
+
+
+def test_connect_is_idempotent() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        first = memory._remember_at("alpha one", None, started)
+        second = memory._remember_at("gamma two", None, started + timedelta(seconds=3600))
+        memory._connect_at(first.id, second.id, started + timedelta(seconds=3600))
+        memory._connect_at(first.id, second.id, started + timedelta(seconds=3600))
+
+        edge = memory._store.get_edge_between(first.id, second.id)
+        assert edge is not None
+        assert edge.weight == pytest.approx(0.5)
+        # Repeating an assertion must not accumulate confidence evidence.
+        assert edge.reinforcement_count == 0
+        assert memory.stats().edges == 1
+
+
+def test_connect_rejects_non_uuid_arguments() -> None:
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        first = memory.remember("alpha one")
+        with pytest.raises(InvalidArgumentError, match="two UUID"):
+            memory.connect(first.id, cast(UUID, "not-a-uuid"))
+
+
+def test_forget_removes_a_connected_memory_and_its_edge() -> None:
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        first = memory.remember("alpha one")
+        second = memory.remember("gamma two")
+        memory.connect(first.id, second.id)
+        assert memory.stats().edges == 1
+
+        memory.forget(second.id)
+        after = memory.stats()
+        assert after.memories == 1
+        assert after.edges == 0
+        assert memory._store.list_edges_for_node(first.id) == ()
+
+
 def test_forget_stats_and_context_manager() -> None:
     memory = Synaptic(":memory:", embedding_fn=embedding)
     with memory:

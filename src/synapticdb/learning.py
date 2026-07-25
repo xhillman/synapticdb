@@ -140,6 +140,14 @@ def feedback_rate(params: Mapping[str, ParameterValue]) -> float:
     return _unit_float(value, "feedback rate")
 
 
+def connect_weight(params: Mapping[str, ParameterValue]) -> float:
+    """Read and validate the weight an explicit connect asserts."""
+    value = params.get("connect_weight")
+    if isinstance(value, tuple) or value is None:
+        raise InvalidArgumentError("connect_weight must be a single number")
+    return _unit_float(value, "connect weight")
+
+
 def passive_reinforcement_rate(params: Mapping[str, ParameterValue]) -> float:
     """Return the passive reinforcement rate shared by learning mechanisms."""
     return co_retrieval_config(params).reinforcement_rate

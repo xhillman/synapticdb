@@ -12,6 +12,7 @@ from synapticdb.learning import (
     TemporalLinkConfig,
     co_retrieval_config,
     co_retrieval_pairs,
+    connect_weight,
     decay_config,
     decayed_weight,
     default_parameters,
@@ -111,6 +112,18 @@ def test_co_retrieval_pairs_reject_repeated_results() -> None:
 
 def test_feedback_rate_reads_the_specified_value() -> None:
     assert feedback_rate(default_parameters()) == 0.15
+
+
+def test_connect_weight_reads_the_specified_value() -> None:
+    assert connect_weight(default_parameters()) == 0.5
+
+
+@pytest.mark.parametrize("value", [None, (0.5, 0.5), 1.5, -0.1])
+def test_connect_weight_rejects_a_malformed_value(value: object) -> None:
+    params = default_parameters()
+    params["connect_weight"] = value  # type: ignore[assignment]
+    with pytest.raises(InvalidArgumentError):
+        connect_weight(params)
 
 
 def test_positive_feedback_scales_by_the_energy_product() -> None:

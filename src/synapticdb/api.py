@@ -24,6 +24,7 @@ from synapticdb.learning import (
     ParameterValue,
     co_retrieval_config,
     co_retrieval_pairs,
+    connect_weight,
     decay_config,
     default_parameters,
     feedback_rate,
@@ -371,6 +372,29 @@ class Synaptic:
                 continue
             updates.append((edge.id, negative_feedback_weight(edge.effective_weight, first, second, rate)))
         return tuple(seeds), tuple(updates)
+
+    def connect(self, first_id: UUID, second_id: UUID) -> None:
+        """Assert an explicit link between two memories (PRD §3, §9 group 15).
+
+        The only user-created edge origin. Idempotent, and never weakens a link
+        the graph already rates more highly.
+        """
+        self._connect_at(first_id, second_id, datetime.now(timezone.utc))
+
+    def _connect_at(self, first_id: UUID, second_id: UUID, now: datetime) -> None:
+        """Assert an explicit link against a single read time."""
+        self._require_open()
+        if not isinstance(first_id, UUID) or not isinstance(second_id, UUID):
+            raise InvalidArgumentError("connect requires two UUID memory_ids")
+        self._store.assert_edge(
+            first_id,
+            second_id,
+            connect_weight(self._params),
+            "explicit",
+            asserted_at=now,
+            half_life_days=self._half_life_days(),
+        )
+        self._confidence.invalidate()
 
     def forget(self, memory_id: UUID) -> None:
         self._require_open()

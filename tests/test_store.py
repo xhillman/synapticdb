@@ -260,6 +260,62 @@ def test_list_edges_on_a_dense_hub_returns_strongest_edges(store: Store) -> None
     assert all(edges[index].weight >= edges[index + 1].weight for index in range(len(edges) - 1))
 
 
+def test_assert_edge_creates_an_explicit_link(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    edge = store.assert_edge(first_id, second_id, 0.5, "explicit")
+    assert edge.weight == pytest.approx(0.5)
+    assert edge.origin == "explicit"
+    assert edge.reinforcement_count == 0
+
+
+def test_assert_edge_raises_a_weaker_edge_and_claims_it(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    created_at = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    store.insert_edge(first_id, second_id, 0.2, "temporal", created_at=created_at)
+
+    edge = store.assert_edge(first_id, second_id, 0.5, "explicit", asserted_at=created_at)
+    assert edge.weight == pytest.approx(0.5)
+    assert edge.origin == "explicit"
+    # An assertion is not evidence of use, so it must not inflate this counter.
+    assert edge.reinforcement_count == 0
+    assert store.graph_summary(now=created_at).edge_count == 1
+
+
+def test_assert_edge_keeps_a_stronger_existing_weight(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    created_at = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    store.insert_edge(first_id, second_id, 0.8, "co_retrieval", created_at=created_at)
+
+    edge = store.assert_edge(first_id, second_id, 0.5, "explicit", asserted_at=created_at)
+    assert edge.weight == pytest.approx(0.8)
+    assert edge.origin == "explicit"
+
+
+def test_assert_edge_compares_against_the_decayed_weight(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    long_ago = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    much_later = long_ago + timedelta(days=300)
+    store.insert_edge(first_id, second_id, 0.9, "explicit", created_at=long_ago)
+
+    edge = store.assert_edge(first_id, second_id, 0.5, "explicit", asserted_at=much_later)
+    # The stored 0.9 is worth ~0.0009 after 300 days, so the assertion wins.
+    # Comparing against the stored value would have left the edge dead.
+    assert edge.weight == pytest.approx(0.5)
+    assert edge.last_reinforced_at == much_later
+
+
+def test_assert_edge_validates_its_endpoints(store: Store) -> None:
+    memory_id = remember(store, "first")
+    with pytest.raises(InvalidArgumentError, match="two different"):
+        store.assert_edge(memory_id, memory_id, 0.5, "explicit")
+    with pytest.raises(NotFoundError):
+        store.assert_edge(memory_id, uuid4(), 0.5, "explicit")
+
+
 def test_fresh_edge_reads_its_stored_weight_undecayed(store: Store) -> None:
     first_id = remember(store, "first")
     second_id = remember(store, "second")

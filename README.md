@@ -4,8 +4,10 @@ SynapticDB is a single-file memory store for AI agents where recall gets
 smarter with use. It combines keyword and semantic search with a graph of
 associations learned from how memories are stored and retrieved.
 
-> **Status:** The v0 walking skeleton supports durable hybrid search. Graph
-> activation and learning are still under development.
+> **Status:** v0 in progress. Durable hybrid search, spreading activation, and
+> the learning mechanisms (temporal proximity, co-retrieval, decay, explicit
+> feedback, and explicit links) are implemented. Associative-recall gains are
+> still being validated against the in-repository benchmark.
 
 Install the embedding-enabled package:
 

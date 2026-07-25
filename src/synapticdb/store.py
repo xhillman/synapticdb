@@ -458,6 +458,55 @@ class Store:
             explicit_edges=int(row["explicit_edges"]),
         )
 
+    def assert_edge(
+        self,
+        first_id: UUID,
+        second_id: UUID,
+        weight: float,
+        origin: EdgeOrigin,
+        *,
+        asserted_at: datetime | None = None,
+        half_life_days: float = DEFAULT_HALF_LIFE_DAYS,
+    ) -> Edge:
+        """Declare an edge worth at least `weight`, creating or raising it.
+
+        The third way to write an edge, beside insert_edge (create, leave an
+        existing one alone) and _write_edge (create or reinforce). An assertion
+        never weakens: it compares against the *effective* weight, so a heavy
+        but long-decayed edge is raised rather than left stale.
+
+        `reinforcement_count` is untouched on purpose. That counter feeds graph
+        confidence as evidence of accumulated use, and an idempotent assertion
+        must not let a caller inflate maturity by repeating it.
+        """
+        self._require_open()
+        a, b = _canonical_pair(first_id, second_id)
+        edge_id = _edge_id(a, b)
+        asserted_weight = _unit_float(weight, "weight")
+        stored_origin = _edge_origin(origin)
+        timestamp = _require_utc(asserted_at or _utc_now(), "asserted_at")
+        with self._connection:
+            self._require_memory_ids((str(a), str(b)))
+            existing = self._connection.execute(
+                "SELECT * FROM edges WHERE id = ?",
+                (edge_id,),
+            ).fetchone()
+            if existing is None:
+                self._write_edge(a, EdgeSeed(b, asserted_weight, stored_origin), timestamp, half_life_days)
+            else:
+                current = _edge_from_row(existing, half_life_days, timestamp)
+                self._connection.execute(
+                    "UPDATE edges SET weight = ?, origin = ?, last_reinforced_at = ? WHERE id = ?",
+                    (
+                        max(current.effective_weight, asserted_weight),
+                        stored_origin,
+                        timestamp.isoformat(),
+                        edge_id,
+                    ),
+                )
+            row = self._required_edge_row(edge_id)
+        return _edge_from_row(row, half_life_days, timestamp)
+
     def insert_edge(
         self,
         first_id: UUID,
