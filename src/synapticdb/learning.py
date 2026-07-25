@@ -5,11 +5,18 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from synapticdb.models import InvalidArgumentError
 
 ParameterValue = float | int | tuple[float | int, ...] | None
+
+# PRD section 6.4 half-life, in days. Store methods default to this value so a
+# caller that does not sweep parameters still applies the specified decay.
+DEFAULT_HALF_LIFE_DAYS = 30.0
+_MAX_HALF_LIFE_DAYS = 3650
+_SECONDS_PER_DAY = 86_400.0
 
 # Calibration values for semantic seeding (PRD §6.1 / §9 group 11). Semantic
 # seeding is DISABLED by default (see default_parameters): the full-corpus
@@ -33,6 +40,12 @@ class TemporalLinkConfig:
     window_seconds: int
     max_links: int
     initial_weight: float
+
+
+@dataclass(frozen=True, slots=True)
+class DecayConfig:
+    half_life_days: int
+    prune_threshold: float
 
 
 def default_parameters() -> dict[str, ParameterValue]:
@@ -82,6 +95,16 @@ def temporal_link_config(params: Mapping[str, ParameterValue]) -> TemporalLinkCo
     return TemporalLinkConfig(window, max_links, weight)
 
 
+def decay_config(params: Mapping[str, ParameterValue]) -> DecayConfig:
+    """Read and validate the decay and prune parameter group."""
+    value = params.get("decay_and_prune")
+    if not isinstance(value, tuple) or len(value) != 2:
+        raise InvalidArgumentError("decay_and_prune must contain half-life days and prune threshold")
+    half_life_days = _bounded_int(value[0], "decay half-life days", _MAX_HALF_LIFE_DAYS)
+    prune_threshold = _unit_float(value[1], "prune threshold")
+    return DecayConfig(half_life_days, prune_threshold)
+
+
 def passive_reinforcement_rate(params: Mapping[str, ParameterValue]) -> float:
     """Return the passive reinforcement rate shared by learning mechanisms."""
     value = params.get("co_retrieval")
@@ -117,10 +140,67 @@ def reinforce_weight(weight: float, rate: float) -> float:
     return stored_weight + reinforcement_rate * (1.0 - stored_weight)
 
 
+def decayed_weight(weight: float, days_elapsed: float, half_life_days: float) -> float:
+    """Return the PRD section 6.4 effective weight for one elapsed span.
+
+    Elapsed days below zero clamp to zero: decay only ever reduces a weight.
+    A row written with a future timestamp is therefore treated as brand new
+    rather than amplified, which keeps the result inside [0, 1].
+    """
+    stored_weight = _unit_float(weight, "edge weight")
+    half_life = _positive_days(half_life_days, "decay half-life days")
+    elapsed = _finite_float(days_elapsed, "elapsed days")
+    if elapsed <= 0.0:
+        return stored_weight
+    half_lives_elapsed = elapsed / half_life
+    decay_multiplier = math.pow(2.0, -half_lives_elapsed)
+    return stored_weight * decay_multiplier
+
+
+def effective_weight(
+    weight: float,
+    last_reinforced_at: datetime,
+    now: datetime,
+    half_life_days: float,
+) -> float:
+    """Return the decayed weight of an edge last reinforced at a known time."""
+    reinforced = _utc_datetime(last_reinforced_at, "last_reinforced_at")
+    read_time = _utc_datetime(now, "now")
+    days_elapsed = (read_time - reinforced).total_seconds() / _SECONDS_PER_DAY
+    return decayed_weight(weight, days_elapsed, half_life_days)
+
+
 def _bounded_int(value: float | int, label: str, maximum: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= maximum:
         raise InvalidArgumentError(f"{label} must be between 1 and {maximum}")
     return value
+
+
+def _positive_days(value: float, label: str) -> float:
+    number = _finite_float(value, label)
+    if not 0.0 < number <= float(_MAX_HALF_LIFE_DAYS):
+        raise InvalidArgumentError(f"{label} must be between 0 and {_MAX_HALF_LIFE_DAYS}")
+    return number
+
+
+def _finite_float(value: float, label: str) -> float:
+    if isinstance(value, bool):
+        raise InvalidArgumentError(f"{label} must be numeric")
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise InvalidArgumentError(f"{label} must be numeric") from error
+    if not math.isfinite(number):
+        raise InvalidArgumentError(f"{label} must be finite")
+    return number
+
+
+def _utc_datetime(value: datetime, label: str) -> datetime:
+    if not isinstance(value, datetime):
+        raise InvalidArgumentError(f"{label} must be a datetime")
+    if value.tzinfo is None or value.utcoffset() != timedelta(0):
+        raise InvalidArgumentError(f"{label} must use UTC")
+    return value.astimezone(timezone.utc)
 
 
 def _unit_float(value: float | int, label: str) -> float:

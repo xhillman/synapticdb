@@ -60,11 +60,20 @@ Phase 5 learning milestones are recorded separately:
 
 - `bench/records/phase5-1-semantic-seeding/`
 - `bench/records/phase5-2-temporal-proximity/`
+- `bench/records/phase5-3-decay/`
 
 The Phase 5.2 record preserves 25/25 direct hits and 17/25 associative hits.
 Temporal proximity raises path-backed associative unique wins from 0/25 to
 7/25. The complete Phase 5 gate remains open until later learning mechanisms
 reach 10/25 unique wins.
+
+The Phase 5.3 decay record is byte-for-byte equivalent to Phase 5.2 in every
+per-query outcome, which is the expected result. **The benchmark cannot
+exercise edge decay:** ingestion stamps memories at `_INGEST_EPOCH`
+(2030-01-01), so every edge carries a timestamp ahead of the read time and
+decays by a factor of exactly 1.0. Decay is covered by unit tests instead. A
+future phase that wants decay in the gate must move the ingest epoch into the
+past and offset the query times with it.
 
 **Semantic seeding is disabled by default** (`_params["semantic_seed"] = None`).
 A full-corpus A/B and a threshold sweep showed it contributes +0 unique wins at

@@ -146,6 +146,37 @@ def test_recall_blends_association_and_persists_activation_evidence() -> None:
         assert edge.id in stored.path_edge_ids
 
 
+def test_activation_energy_falls_as_the_connecting_edge_ages() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        anchor = memory._remember_at("alpha anchor", None, started)
+        for index in range(40):
+            memory._remember_at(f"gamma filler {index}", None, started)
+        associated = memory._remember_at("delta hidden", None, started)
+        memory._store.insert_edge(anchor.id, associated.id, 1.0, "explicit", created_at=started)
+
+        fresh = memory._recall_at("alpha", 50, None, started)
+        aged = memory._recall_at("alpha", 50, None, started + timedelta(days=30))
+
+        fresh_energy = memory._store.get_query(fresh.query_id).energies[associated.id]
+        aged_energy = memory._store.get_query(aged.query_id).energies[associated.id]
+        # A full seed spreads 1.0 * weight * (1 - 0.2). One half-life takes the
+        # edge from 1.0 to 0.5, so the energy it carries halves with it.
+        assert fresh_energy == pytest.approx(0.8)
+        assert aged_energy == pytest.approx(0.4)
+
+
+def test_recall_reads_every_edge_at_one_instant() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        first = memory._remember_at("alpha one", None, started)
+        second = memory._remember_at("alpha two", None, started)
+        result = memory._recall_at("alpha", 2, None, started)
+        stored = memory._store.get_query(result.query_id)
+        assert stored.created_at == started
+        assert set(stored.energies) == {first.id, second.id}
+
+
 def test_where_filter_requires_present_equal_metadata() -> None:
     with Synaptic(":memory:", embedding_fn=embedding) as memory:
         call = memory.remember("alpha call", {"source": "call", "optional": None})

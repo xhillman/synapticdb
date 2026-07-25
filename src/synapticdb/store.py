@@ -9,7 +9,7 @@ import re
 import sqlite3
 import unicodedata
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import TracebackType
@@ -19,7 +19,7 @@ from uuid import UUID, uuid4
 import numpy as np
 from numpy.typing import NDArray
 
-from synapticdb.learning import reinforce_weight
+from synapticdb.learning import DEFAULT_HALF_LIFE_DAYS, decayed_weight, reinforce_weight
 from synapticdb.models import EdgeOrigin, EmbeddingError, InvalidArgumentError, Memory, NotFoundError
 
 CANDIDATE_LIMIT = 40
@@ -48,6 +48,14 @@ class Edge:
     created_at: datetime
     last_reinforced_at: datetime
     reinforcement_count: int
+    # PRD section 6.4: `weight` is the stored value, `effective_weight` is that
+    # value decayed to the read time. Consumers that rank, spread, or prune
+    # edges use `effective_weight`; only writers use `weight`.
+    #
+    # Excluded from equality: it is a view of the row at one instant, not part
+    # of the row. Two reads of one edge differ here by the microseconds between
+    # them, and that must not make them unequal edges.
+    effective_weight: float = field(compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +167,11 @@ CREATE TABLE IF NOT EXISTS queries (
 PRAGMA user_version = 1;
 """
 
+# Decay in SQL, so ORDER BY and AVG rank by effective weight rather than by the
+# stored value. julianday() yields the elapsed span in days directly; the two
+# bound parameters are the read time and the half-life, in that order.
+_DECAYED_WEIGHT_SQL = "synaptic_decayed_weight(weight, julianday(?) - julianday(last_reinforced_at), ?)"
+
 
 class Store:
     """Own one SQLite connection and its aligned vector cache."""
@@ -189,6 +202,15 @@ class Store:
         foreign_keys = self._connection.execute("PRAGMA foreign_keys").fetchone()
         if foreign_keys is None or foreign_keys[0] != 1:
             raise RuntimeError("SQLite foreign-key enforcement is unavailable")
+        # Register the decay law itself rather than restating it in SQL: SQLite
+        # math functions are a build-time option, and one implementation cannot
+        # drift from the Python one.
+        self._connection.create_function(
+            "synaptic_decayed_weight",
+            3,
+            _sql_decayed_weight,
+            deterministic=True,
+        )
         self._connection.executescript(_SCHEMA_SQL)
         if not fts_existed:
             self._connection.execute("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')")
@@ -249,6 +271,7 @@ class Store:
         *,
         memory_id: UUID | None = None,
         created_at: datetime | None = None,
+        half_life_days: float = DEFAULT_HALF_LIFE_DAYS,
     ) -> MemoryInsert:
         """Insert one memory and its bounded initial edges atomically."""
         self._require_open()
@@ -287,7 +310,7 @@ class Store:
             )
             row = self._required_memory_row(identifier)
             for seed in seeds:
-                self._write_edge(identifier, seed, timestamp)
+                self._write_edge(identifier, seed, timestamp, half_life_days)
         self._append_vector_cache(identifier, vector)
         return MemoryInsert(_memory_from_row(row), True)
 
@@ -378,21 +401,30 @@ class Store:
         ).fetchone()
         return None if row is None else int(row["value"])
 
-    def graph_summary(self) -> GraphSummary:
+    def graph_summary(
+        self,
+        *,
+        half_life_days: float = DEFAULT_HALF_LIFE_DAYS,
+        now: datetime | None = None,
+    ) -> GraphSummary:
         self._require_open()
+        read_time = _require_utc(now or _utc_now(), "now")
+        # The average uses effective weights (PRD §6.4), so graph confidence
+        # reports what the graph is worth now rather than what it once held.
         row = self._connection.execute(
-            """
+            f"""
             SELECT
                 (SELECT COUNT(*) FROM memories) AS memory_count,
                 COUNT(*) AS edge_count,
-                COALESCE(AVG(weight), 0.0) AS average_edge_weight,
+                COALESCE(AVG({_DECAYED_WEIGHT_SQL}), 0.0) AS average_edge_weight,
                 COALESCE(AVG(reinforcement_count), 0.0) AS average_reinforcement_count,
                 COALESCE(SUM(origin = 'semantic'), 0) AS semantic_edges,
                 COALESCE(SUM(origin = 'temporal'), 0) AS temporal_edges,
                 COALESCE(SUM(origin = 'co_retrieval'), 0) AS co_retrieval_edges,
                 COALESCE(SUM(origin = 'explicit'), 0) AS explicit_edges
             FROM edges
-            """
+            """,
+            (read_time.isoformat(), half_life_days),
         ).fetchone()
         if row is None:
             raise RuntimeError("graph summary query returned no row")
@@ -415,6 +447,7 @@ class Store:
         origin: EdgeOrigin,
         *,
         created_at: datetime | None = None,
+        half_life_days: float = DEFAULT_HALF_LIFE_DAYS,
     ) -> Edge:
         """Create the canonical edge; if it already exists, return it unchanged.
 
@@ -430,15 +463,16 @@ class Store:
         with self._connection:
             self._require_memory_ids((str(a), str(b)))
             seed = EdgeSeed(b, stored_weight, stored_origin)
-            self._write_edge(a, seed, timestamp)
+            self._write_edge(a, seed, timestamp, half_life_days)
             row = self._required_edge_row(edge_id)
-        return _edge_from_row(row)
+        return _edge_from_row(row, half_life_days, timestamp)
 
     def _write_edge(
         self,
         memory_id: UUID,
         seed: EdgeSeed,
         timestamp: datetime,
+        half_life_days: float,
     ) -> None:
         a, b = _canonical_pair(memory_id, seed.memory_id)
         edge_id = _edge_id(a, b)
@@ -465,7 +499,12 @@ class Store:
         if cursor.rowcount == 1 or seed.reinforce_rate is None:
             return
         row = self._required_edge_row(edge_id)
-        weight = reinforce_weight(float(row["weight"]), seed.reinforce_rate)
+        # PRD section 6.4: decay is lazy, but this UPDATE already rewrites the
+        # weight and resets last_reinforced_at, so the aged value must be the
+        # base of the reinforcement. Reinforcing the stored value instead would
+        # silently cancel every day of decay the edge had accrued.
+        aged = _decay_to(float(row["weight"]), row["last_reinforced_at"], timestamp, half_life_days)
+        weight = reinforce_weight(aged, seed.reinforce_rate)
         update = self._connection.execute(
             """
             UPDATE edges
@@ -478,38 +517,76 @@ class Store:
         if update.rowcount != 1:
             raise RuntimeError("edge reinforcement did not update one row")
 
-    def get_edge(self, edge_id: str) -> Edge:
+    def get_edge(
+        self,
+        edge_id: str,
+        *,
+        half_life_days: float = DEFAULT_HALF_LIFE_DAYS,
+        now: datetime | None = None,
+    ) -> Edge:
         self._require_open()
-        return _edge_from_row(self._required_edge_row(edge_id))
+        read_time = _require_utc(now or _utc_now(), "now")
+        return _edge_from_row(self._required_edge_row(edge_id), half_life_days, read_time)
 
-    def get_edge_between(self, first_id: UUID, second_id: UUID) -> Edge | None:
+    def get_edge_between(
+        self,
+        first_id: UUID,
+        second_id: UUID,
+        *,
+        half_life_days: float = DEFAULT_HALF_LIFE_DAYS,
+        now: datetime | None = None,
+    ) -> Edge | None:
         self._require_open()
+        read_time = _require_utc(now or _utc_now(), "now")
         a, b = _canonical_pair(first_id, second_id)
         row = self._connection.execute(
             "SELECT * FROM edges WHERE id = ?",
             (_edge_id(a, b),),
         ).fetchone()
-        return None if row is None else _edge_from_row(row)
+        return None if row is None else _edge_from_row(row, half_life_days, read_time)
 
-    def list_edges_for_node(self, memory_id: UUID) -> tuple[Edge, ...]:
+    def list_edges_for_node(
+        self,
+        memory_id: UUID,
+        *,
+        half_life_days: float = DEFAULT_HALF_LIFE_DAYS,
+        now: datetime | None = None,
+    ) -> tuple[Edge, ...]:
         self._require_open()
         self._require_memory_ids((str(memory_id),))
+        read_time = _require_utc(now or _utc_now(), "now")
         # A hub node past the limit degrades to its strongest edges rather
         # than failing recall; co-retrieval learning makes dense hubs normal.
-        # TODO(phase-5): "strongest" ranks by stored weight; once lazy decay
-        # lands (§6.4), effective weight is the honest ranking.
+        # "Strongest" ranks by effective weight (PRD §6.4), so a stale heavy
+        # edge cannot crowd out a fresh one before the caller ever sees it.
         rows = self._connection.execute(
-            "SELECT * FROM edges WHERE a = ? OR b = ? ORDER BY weight DESC, rowid LIMIT ?",
-            (str(memory_id), str(memory_id), _EDGE_LOOKUP_LIMIT),
+            f"""
+            SELECT * FROM edges WHERE a = ? OR b = ?
+            ORDER BY {_DECAYED_WEIGHT_SQL} DESC, rowid
+            LIMIT ?
+            """,
+            (
+                str(memory_id),
+                str(memory_id),
+                read_time.isoformat(),
+                half_life_days,
+                _EDGE_LOOKUP_LIMIT,
+            ),
         ).fetchall()
-        return tuple(_edge_from_row(row) for row in rows)
+        return tuple(_edge_from_row(row, half_life_days, read_time) for row in rows)
 
     def bulk_update_edge_weights(
         self,
         updates: Sequence[tuple[str, float]],
         *,
         reinforced_at: datetime | None = None,
+        half_life_days: float = DEFAULT_HALF_LIFE_DAYS,
     ) -> tuple[Edge, ...]:
+        """Write caller-computed weights and reset their decay clocks.
+
+        Callers derive the new weight from Edge.effective_weight, not from
+        Edge.weight: this method stores exactly what it is given.
+        """
         self._require_open()
         prepared = tuple((edge_id, _unit_float(weight, "weight")) for edge_id, weight in updates)
         if not all(isinstance(edge_id, str) and edge_id for edge_id, _ in prepared):
@@ -533,7 +610,7 @@ class Store:
                 if cursor.rowcount != 1:
                     raise NotFoundError(f"unknown edge_id: {edge_id}")
             rows = self._edge_rows_by_ids(tuple(edge_id for edge_id, _ in prepared))
-        return tuple(_edge_from_row(row) for row in rows)
+        return tuple(_edge_from_row(row, half_life_days, timestamp) for row in rows)
 
     def save_query(
         self,
@@ -864,16 +941,38 @@ def _memory_from_row(row: sqlite3.Row) -> Memory:
     )
 
 
-def _edge_from_row(row: sqlite3.Row) -> Edge:
+def _decay_to(weight: float, last_reinforced_at: str, now: datetime, half_life_days: float) -> float:
+    """Decay one stored weight from its ISO timestamp to the given read time."""
+    elapsed = (now - datetime.fromisoformat(last_reinforced_at)).total_seconds() / 86_400.0
+    return decayed_weight(weight, elapsed, half_life_days)
+
+
+def _sql_decayed_weight(
+    weight: float | None,
+    days_elapsed: float | None,
+    half_life_days: float | None,
+) -> float:
+    """Expose the PRD section 6.4 decay law to SQLite."""
+    if weight is None or days_elapsed is None or half_life_days is None:
+        # julianday() returns NULL for a timestamp it cannot parse. Every
+        # timestamp is written by _require_utc, so a NULL here means the row is
+        # corrupt and must not be silently ranked as weightless.
+        raise RuntimeError("edge row contains an unreadable weight or timestamp")
+    return decayed_weight(weight, days_elapsed, half_life_days)
+
+
+def _edge_from_row(row: sqlite3.Row, half_life_days: float, now: datetime) -> Edge:
+    stored_weight = float(row["weight"])
     return Edge(
         id=row["id"],
         a=UUID(row["a"]),
         b=UUID(row["b"]),
-        weight=float(row["weight"]),
+        weight=stored_weight,
         origin=cast(EdgeOrigin, row["origin"]),
         created_at=datetime.fromisoformat(row["created_at"]),
         last_reinforced_at=datetime.fromisoformat(row["last_reinforced_at"]),
         reinforcement_count=int(row["reinforcement_count"]),
+        effective_weight=_decay_to(stored_weight, row["last_reinforced_at"], now, half_life_days),
     )
 
 

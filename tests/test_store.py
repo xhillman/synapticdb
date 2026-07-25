@@ -260,6 +260,89 @@ def test_list_edges_on_a_dense_hub_returns_strongest_edges(store: Store) -> None
     assert all(edges[index].weight >= edges[index + 1].weight for index in range(len(edges) - 1))
 
 
+def test_fresh_edge_reads_its_stored_weight_undecayed(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    edge = store.insert_edge(first_id, second_id, 0.4, "semantic", created_at=created_at)
+    assert edge.effective_weight == pytest.approx(edge.weight)
+
+    aged = store.get_edge(edge.id, now=created_at + timedelta(days=60))
+    assert aged.weight == 0.4
+    assert aged.effective_weight == pytest.approx(0.1)
+
+
+def test_hub_ranking_prefers_a_fresh_edge_over_a_stale_heavier_one(store: Store) -> None:
+    center_id = remember(store, "center")
+    stale_id = remember(store, "stale neighbor")
+    fresh_id = remember(store, "fresh neighbor")
+    long_ago = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    read_time = long_ago + timedelta(days=300)
+    store.insert_edge(center_id, stale_id, 0.9, "explicit", created_at=long_ago)
+    store.insert_edge(center_id, fresh_id, 0.3, "semantic", created_at=read_time)
+
+    edges = store.list_edges_for_node(center_id, now=read_time)
+    # 0.9 decayed over 300 days (10 half-lives) is far below a fresh 0.3, so
+    # ordering by stored weight would put the dead edge first.
+    neighbors = [edge.b if edge.a == center_id else edge.a for edge in edges]
+    assert neighbors == [fresh_id, stale_id]
+    assert edges[0].effective_weight > edges[1].effective_weight
+
+
+def test_duplicate_seeds_reinforce_the_same_edge_once(store: Store) -> None:
+    neighbor_id = remember(store, "neighbor")
+    created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    result = store.insert_memory_with_edges(
+        "new memory",
+        {},
+        (1.0, 0.0),
+        (
+            EdgeSeed(neighbor_id, 0.25, "semantic", 0.05),
+            EdgeSeed(neighbor_id, 0.2, "temporal", 0.05),
+        ),
+        created_at=created_at,
+    )
+
+    (edge,) = store.list_edges_for_node(result.memory.id, now=created_at)
+    # The second seed reinforces rather than duplicating: 0.25 + 0.05 * 0.75.
+    assert edge.weight == pytest.approx(0.2875)
+    assert edge.reinforcement_count == 1
+
+
+def test_reinforcement_decays_the_stored_weight_before_raising_it(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    later = created_at + timedelta(days=30)
+    edge = store.insert_edge(first_id, second_id, 0.4, "semantic", created_at=created_at)
+
+    # _write_edge is driven directly because every public caller today
+    # reinforces an edge created in the same call, where no time has passed.
+    # Phase 5.4 co-retrieval is the first mechanism to reinforce an aged edge.
+    with store._connection:
+        store._write_edge(first_id, EdgeSeed(second_id, 0.2, "temporal", 0.05), later, 30.0)
+
+    reinforced = store.get_edge(edge.id, now=later)
+    # One half-life takes the stored 0.4 to 0.2; reinforcement then adds
+    # 0.05 * (1 - 0.2). Reinforcing the undecayed 0.4 would have given 0.43.
+    assert reinforced.weight == pytest.approx(0.24)
+    assert reinforced.last_reinforced_at == later
+    assert reinforced.reinforcement_count == 1
+    assert reinforced.effective_weight == pytest.approx(0.24)
+
+
+def test_graph_summary_average_weight_falls_as_edges_age(store: Store) -> None:
+    first_id = remember(store, "first")
+    second_id = remember(store, "second")
+    created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    store.insert_edge(first_id, second_id, 0.6, "explicit", created_at=created_at)
+
+    fresh = store.graph_summary(now=created_at)
+    aged = store.graph_summary(now=created_at + timedelta(days=30))
+    assert fresh.average_edge_weight == pytest.approx(0.6)
+    assert aged.average_edge_weight == pytest.approx(0.3)
+
+
 def test_bulk_edge_update_rolls_back_on_unknown_edge(store: Store) -> None:
     first_id = remember(store, "first")
     second_id = remember(store, "second")

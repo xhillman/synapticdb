@@ -39,6 +39,11 @@ class ConfidenceCache:
     invalidate(). TODO(phase-5): co-retrieval reinforcement (inside recall),
     feedback edge updates, and connect() all write the graph and must
     invalidate; a missed call means maturity goes silently stale.
+
+    Edge decay (PRD §6.4) also moves confidence, and time passing fires no
+    invalidate(). A long-lived instance that never writes therefore reports the
+    maturity it computed at its first recall. Accepted for v0: instances are
+    short-lived, and every remember() drops the cached value anyway.
     """
 
     def __init__(self) -> None:

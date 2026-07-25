@@ -6,6 +6,7 @@ import json
 import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 from types import TracebackType
 from uuid import UUID
@@ -20,6 +21,7 @@ from synapticdb.confidence import ConfidenceCache, GraphMetrics
 from synapticdb.embeddings import Embedder, EmbeddingFunction
 from synapticdb.learning import (
     ParameterValue,
+    decay_config,
     default_parameters,
     passive_reinforcement_rate,
     semantic_seed_config,
@@ -86,6 +88,7 @@ class Synaptic:
             embedding,
             seeds,
             created_at=created_at,
+            half_life_days=self._half_life_days(),
         )
         if result.inserted:
             self._confidence.invalidate()
@@ -128,13 +131,27 @@ class Synaptic:
         top_k: int = 10,
         where: Mapping[str, object] | None = None,
     ) -> RecallResult:
+        return self._recall_at(query, top_k, where, datetime.now(timezone.utc))
+
+    def _recall_at(
+        self,
+        query: str,
+        top_k: int,
+        where: Mapping[str, object] | None,
+        now: datetime,
+    ) -> RecallResult:
+        """Run one recall against a single read time.
+
+        Every edge weight in this recall decays to `now`, so a query cannot see
+        one neighbor aged to a different instant than the next.
+        """
         self._require_open()
         started = time.perf_counter()
         text = _bounded_text(query, "query")
         result_limit = _top_k(top_k)
         filters = _where_filter(where)
         embedding = self._embedder.embed(text)
-        ranked, activation, maturity = self._rank_candidates(text, embedding)
+        ranked, activation, maturity = self._rank_candidates(text, embedding, now)
         selected_ids, selected = self._select_results(ranked, filters, result_limit)
         energies = _result_energies(selected_ids, activation)
         query_row, memories = self._store.record_recall(
@@ -142,6 +159,7 @@ class Synaptic:
             selected_ids,
             energies,
             activation.path_edge_ids,
+            recorded_at=now,
         )
         recalled = [
             Recalled(memory=memory, score=selected[memory.id].score, via=selected[memory.id].via)
@@ -159,6 +177,7 @@ class Synaptic:
         self,
         text: str,
         embedding: Sequence[float],
+        now: datetime,
     ) -> tuple[tuple[BlendedHit, ...], ActivationResult, float]:
         keyword = self._store.keyword_search(text, limit=CANDIDATE_LIMIT)
         semantic = self._store.semantic_search(embedding, limit=CANDIDATE_LIMIT)
@@ -169,25 +188,33 @@ class Synaptic:
             )
         )
         fused_scores = min_max_normalize({hit.memory_id: hit.score for hit in fused})
-        maturity = self._maturity(self._store.graph_summary())
+        summary = self._store.graph_summary(half_life_days=self._half_life_days(), now=now)
+        maturity = self._maturity(summary)
         seeds = tuple(
             (hit.memory_id, fused_scores[hit.memory_id])
             for hit in fused[:ACTIVATION_SEED_COUNT]
         )
-        activation = spread_activation(seeds, self._activation_neighbors)
+        activation = spread_activation(seeds, partial(self._activation_neighbors_at, now))
         activation_scores = {hit.memory_id: hit.score for hit in activation.hits}
         ranked = blend_rankings(fused_scores, activation_scores, maturity)
         return ranked, activation, maturity
 
-    def _activation_neighbors(self, memory_id: UUID) -> tuple[Neighbor, ...]:
-        # TODO(phase-5): PRD §5.2 spreads via *effective* edge weight (§6.4);
-        # edge.weight is the stored, undecayed value. Switch to the decayed
-        # weight when lazy decay lands, or activation ignores edge aging.
+    def _activation_neighbors_at(self, now: datetime, memory_id: UUID) -> tuple[Neighbor, ...]:
+        # PRD §5.2 spreads energy through the *effective* edge weight (§6.4),
+        # so an edge that has not been reinforced in months carries less.
+        edges = self._store.list_edges_for_node(
+            memory_id,
+            half_life_days=self._half_life_days(),
+            now=now,
+        )
         neighbors: list[Neighbor] = []
-        for edge in self._store.list_edges_for_node(memory_id):
+        for edge in edges:
             target_id = edge.b if edge.a == memory_id else edge.a
-            neighbors.append(Neighbor(target_id, edge.id, edge.weight))
+            neighbors.append(Neighbor(target_id, edge.id, edge.effective_weight))
         return tuple(neighbors)
+
+    def _half_life_days(self) -> float:
+        return float(decay_config(self._params).half_life_days)
 
     def _select_results(
         self,
@@ -216,7 +243,7 @@ class Synaptic:
 
     def stats(self) -> Stats:
         self._require_open()
-        summary = self._store.graph_summary()
+        summary = self._store.graph_summary(half_life_days=self._half_life_days())
         return Stats(
             memories=summary.memory_count,
             edges=summary.edge_count,
