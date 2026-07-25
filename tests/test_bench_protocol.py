@@ -278,6 +278,45 @@ def test_the_mrr_ratchet_fails_a_regression() -> None:
     assert _run(weak, dataset).runs[0].mrr == pytest.approx(0.2)  # type: ignore[attr-defined]
 
 
+def _chained() -> BenchmarkDataset:
+    return load_dataset(ROOT / "bench/data/chained", expected_counts=(500, 25, 25))
+
+
+def _auc_for(answer_score: float, distractor_score: float) -> float | None:
+    dataset = _chained()
+    candidate = AnsweringRetriever("c", dataset, rank=1, answer_score=answer_score, distractor_score=distractor_score)
+    report = _run(candidate, dataset)
+    auc: float | None = report.runs[0].confidence_auc  # type: ignore[attr-defined]
+    return auc
+
+
+def test_confidence_auc_measures_separation_in_both_directions() -> None:
+    # Perfect separation, none, and inverted.
+    assert _auc_for(0.9, 0.1) == pytest.approx(1.0)
+    assert _auc_for(0.5, 0.5) == pytest.approx(0.5)
+    assert _auc_for(0.1, 0.9) == pytest.approx(0.0)
+
+
+def test_the_confidence_gate_fails_a_system_that_cannot_be_thresholded() -> None:
+    dataset = _chained()
+    separating = AnsweringRetriever("c", dataset, rank=1, answer_score=0.9, distractor_score=0.1)
+    overlapping = AnsweringRetriever("c", dataset, rank=1, answer_score=0.5, distractor_score=0.5)
+
+    assert _run(separating, dataset).passed  # type: ignore[attr-defined]
+    # An AUC of 0.5 is no signal: a threshold cannot separate the two, and the
+    # run must say so rather than reporting a number nobody checks.
+    assert not _run(overlapping, dataset).passed  # type: ignore[attr-defined]
+
+
+def test_confidence_gate_is_absent_rather_than_passing_without_distractors() -> None:
+    dataset = _smoke()
+    candidate = AnsweringRetriever("c", dataset, rank=1, answer_score=0.5, distractor_score=0.5)
+    run = _run(candidate, dataset).runs[0]  # type: ignore[attr-defined]
+    # The smoke profile has no distractors, so there is nothing to measure.
+    assert run.confidence_auc is None
+    assert run.passed
+
+
 def test_measurement_rejects_an_unknown_name() -> None:
     with pytest.raises(ValueError, match="unknown measurement"):
         run_benchmark(

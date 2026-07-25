@@ -23,6 +23,7 @@ from .contracts import (
     MAX_SIMULATED_DAYS,
     MAX_TOP_K,
     MAX_WARMUP_COUNT,
+    MIN_CONFIDENCE_AUC,
 )
 from .dataset import BenchmarkDataset, QueryRecord
 from .retrievers import INGEST_EPOCH, Retrieval, Retriever
@@ -115,6 +116,9 @@ class SeedResult:
     # means the system scores a real answer above anything it finds for a
     # question that has none. None when the profile carries no distractors.
     score_separation: float | None = None
+    # Pre-registered gate: MIN_CONFIDENCE_AUC. None when the profile has no
+    # distractors, which is an absent measurement rather than a passing one.
+    confidence_auc: float | None = None
 
 
 @dataclass(frozen=True)
@@ -481,6 +485,7 @@ def _score(
     mrr = _mean(score.reciprocal_rank for score in answerable)
     coverage = _mean(score.intermediate_coverage for score in answerable if score.label == "associative")
     separation = _score_separation(scores)
+    auc = _confidence_auc(scores)
     base_rate = base_direct / dataset.direct_total
     candidate_rate = candidate_direct / dataset.direct_total
     parity = candidate_rate + direct_tolerance >= base_rate
@@ -506,6 +511,7 @@ def _score(
             and all(measurement.passed for measurement in measurements)
             and (mrr_floor is None or mrr >= mrr_floor)
             and (separation is None or separation > 0.0)
+            and (auc is None or auc >= MIN_CONFIDENCE_AUC)
         ),
         elapsed_seconds=elapsed,
         queries=scores,
@@ -513,6 +519,7 @@ def _score(
         mrr=mrr,
         mean_intermediate_coverage=coverage,
         score_separation=separation,
+        confidence_auc=auc,
     )
 
 
@@ -521,13 +528,25 @@ def _mean(values: Iterable[float]) -> float:
     return sum(collected) / len(collected) if collected else 0.0
 
 
-def _score_separation(scores: Sequence[QueryScore]) -> float | None:
-    """How far a real answer outscores the best guess at an unanswerable one.
+def _confidence_auc(scores: Sequence[QueryScore]) -> float | None:
+    """How often a correct answer outscores a question that has none.
 
-    Positive means the score an agent would threshold on carries information.
-    None when the profile has no distractors, or when the retriever supplies no
-    scores — an absent measurement, not a passing one.
+    The Mann-Whitney statistic: 1.0 is perfect separation, 0.5 is no signal,
+    ties count as half. Threshold-free on purpose — it asks whether *any*
+    threshold could work, rather than assuming one.
     """
+    answered, distractors = _confidence_samples(scores)
+    if not answered or not distractors:
+        return None
+    wins = sum(
+        1.0 if answer > distractor else 0.5 if answer == distractor else 0.0
+        for answer in answered
+        for distractor in distractors
+    )
+    return wins / (len(answered) * len(distractors))
+
+
+def _confidence_samples(scores: Sequence[QueryScore]) -> tuple[list[float], list[float]]:
     answered = [
         score.candidate_top_score
         for score in scores
@@ -538,6 +557,17 @@ def _score_separation(scores: Sequence[QueryScore]) -> float | None:
         for score in scores
         if score.label == "distractor" and score.candidate_top_score is not None
     ]
+    return answered, distractors
+
+
+def _score_separation(scores: Sequence[QueryScore]) -> float | None:
+    """How far a real answer outscores the best guess at an unanswerable one.
+
+    Positive means the score an agent would threshold on carries information.
+    None when the profile has no distractors, or when the retriever supplies no
+    scores — an absent measurement, not a passing one.
+    """
+    answered, distractors = _confidence_samples(scores)
     if not answered or not distractors:
         return None
     return median(answered) - median(distractors)

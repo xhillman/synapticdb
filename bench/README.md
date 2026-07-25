@@ -64,6 +64,17 @@ rewards surfacing more cannot evaluate a change that surfaces more.
 | MRR | rank movement recall@10 rounds away | yes, ratcheted |
 | chain coverage | how much of the annotated reasoning path came back | **no** |
 | score separation | confidence on questions with no answer | yes, must be positive |
+| confidence AUC | whether *any* threshold could separate them | yes, ≥ 0.80 |
+
+AUC is threshold-free on purpose: it asks whether a usable threshold exists
+rather than assuming one. Measured 0.9940 at the calibration record, where the
+separation gate alone read a near-worthless +0.0029 — the weaker gate passed a
+system whose score carried no information, which is why the stricter one was
+added beside it rather than replacing it.
+
+The retriever supplies `Recalled.confidence` in `Retrieval.scores`, not
+`score`. `score` is normalized within a query, so it cannot be compared across
+queries and cannot be calibrated by construction.
 
 `--compare-to <record dir>` supplies the MRR floor from a promoted record. Absent
 it, the gate is skipped rather than defaulting to zero: a gate with nothing to

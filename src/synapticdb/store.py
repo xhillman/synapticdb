@@ -966,6 +966,38 @@ class Store:
         ranked = np.argsort(-scores, kind="stable")[:result_limit]
         return tuple(SearchHit(UUID(identifiers[int(index)]), float(scores[int(index)])) for index in ranked)
 
+    def similarities(
+        self,
+        query_embedding: Sequence[float],
+        memory_ids: Sequence[UUID],
+    ) -> dict[UUID, float]:
+        """Return cosine similarity to the query for each requested memory.
+
+        semantic_search only reports its own top-k, but a result can reach the
+        final ranking through keyword search or activation without ever
+        entering that set — and its similarity is exactly the evidence a caller
+        needs to judge it. Unknown IDs are omitted rather than raising: a
+        forgotten memory has no similarity, which is not an error.
+        """
+        self._require_open()
+        identifiers = _uuid_texts(memory_ids, "memory_ids")
+        if not identifiers:
+            return {}
+        vector = _prepare_embedding(query_embedding)
+        dimension = self.embedding_dimension()
+        if dimension is None:
+            return {}
+        if vector.size != dimension:
+            raise EmbeddingError(f"embedding dimension {vector.size} does not match stored dimension {dimension}")
+        cached_ids, matrix = self._vector_cache(dimension)
+        positions = {identifier: index for index, identifier in enumerate(cached_ids)}
+        unit_query = vector / _vector_norm(vector)
+        return {
+            UUID(identifier): float(matrix[positions[identifier]] @ unit_query)
+            for identifier in identifiers
+            if identifier in positions
+        }
+
     def _required_memory_row(self, memory_id: UUID) -> sqlite3.Row:
         row = self._connection.execute(
             "SELECT * FROM memories WHERE id = ?",

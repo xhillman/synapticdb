@@ -7,7 +7,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .contracts import MAX_RUN_ID_CHARS, MAX_SEED_COUNT
+from .contracts import MAX_RUN_ID_CHARS, MAX_SEED_COUNT, MIN_CONFIDENCE_AUC
 from .protocol import BenchmarkReport
 
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -24,21 +24,26 @@ def _render_quality(report: BenchmarkReport) -> list[str]:
     """Rank quality, path coverage, and score calibration."""
     floor = report.mrr_floor
     lines = [
-        "| Seed | MRR | MRR floor | Chain coverage | Score separation |",
-        "|---:|---:|---|---:|---|",
+        "| Seed | MRR | MRR floor | Chain coverage | Separation | Confidence AUC | Gate |",
+        "|---:|---:|---|---:|---|---:|---|",
     ]
     for run in report.runs:
         separation = "—" if run.score_separation is None else f"{run.score_separation:+.4f}"
+        auc = "—" if run.confidence_auc is None else f"{run.confidence_auc:.4f}"
+        verdict = (
+            "—" if run.confidence_auc is None else ("PASS" if run.confidence_auc >= MIN_CONFIDENCE_AUC else "FAIL")
+        )
         lines.append(
             f"| {run.seed} | {run.mrr:.4f} | {'—' if floor is None else f'{floor:.4f}'} | "
-            f"{run.mean_intermediate_coverage:.4f} | {separation} |"
+            f"{run.mean_intermediate_coverage:.4f} | {separation} | {auc} | {verdict} |"
         )
     lines.extend(
         [
             "",
-            "MRR must not regress against the record named by `--compare-to`; a real "
-            "answer must outscore the best guess at an unanswerable question. Chain "
-            "coverage is reported, not gated: we cannot yet argue which direction is good.",
+            f"Confidence AUC must reach `{MIN_CONFIDENCE_AUC:.2f}`: a correct answer must "
+            "outscore a question with no answer at least that often, or the field cannot "
+            "be thresholded. MRR must not regress against `--compare-to`. Chain coverage "
+            "is reported, not gated: we cannot yet argue which direction is good.",
             "",
         ]
     )

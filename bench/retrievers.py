@@ -205,7 +205,9 @@ class SynapticRetriever:
             ranked,
             path_ids,
             str(result.query_id),
-            scores=tuple(item.score for item in result.memories),
+            # Confidence, not score: calibration asks whether a number can be
+            # thresholded across queries, and `score` is normalized within one.
+            scores=tuple(item.confidence for item in result.memories),
         )
 
     def _path_benchmark_ids(self, query_id: UUID) -> tuple[str, ...]:

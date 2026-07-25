@@ -2,6 +2,7 @@ import re
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -36,3 +37,29 @@ def test_readme_quickstart_runs_verbatim(
     exec(compile(match.group("code"), "README.md", "exec"), {})
     output = capsys.readouterr().out
     assert output.strip() == "Client X requires SOC2 for vendor deployments"
+
+
+def test_readme_confidence_example_runs_verbatim() -> None:
+    """The filtering example is what an agent would copy, so it must work.
+
+    Only the first block was ever executed, which left later snippets free to
+    drift out of the API. This runs the confidence example against a real
+    instance rather than trusting it by inspection.
+    """
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    blocks = [match.group("code") for match in _PYTHON_BLOCK.finditer(readme)]
+    snippet = next((block for block in blocks if "confidence" in block), None)
+    assert snippet is not None, "README should show how to filter on confidence"
+
+    from synapticdb import Synaptic
+
+    def embedding(text: str) -> tuple[float, float]:
+        lowered = text.lower()
+        return (float(lowered.count("client")), float(lowered.count("invoice")))
+
+    with Synaptic(":memory:", embedding_fn=embedding) as memories:
+        memories.remember("Client X requires SOC2 for vendor deployments")
+        namespace: dict[str, Any] = {"memories": memories}
+        exec(compile(snippet, "README.md", "exec"), namespace)
+        relevant = namespace["relevant"]
+        assert all(item.confidence >= 0.6 for item in relevant)

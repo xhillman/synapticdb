@@ -50,7 +50,14 @@ class Memory(BaseModel):
 
 class Recalled(BaseModel):
     memory: Memory
+    # Blended ranking strength within this query. Comparable between results of
+    # one recall, not between recalls: it is min-max normalized per query.
     score: UnitFloat
+    # Evidence that this memory addresses the query, comparable across queries.
+    # Threshold on this, not on `score`. An association has weak textual
+    # evidence by construction — that is why search missed it — so it scores
+    # low here even when the graph is right about it.
+    confidence: UnitFloat
     via: RecallSource
 
 

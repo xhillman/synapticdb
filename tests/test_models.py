@@ -22,8 +22,18 @@ def make_memory(content: str = "fact") -> Memory:
     return Memory(id=uuid4(), content=content, created_at=now, last_accessed_at=now)
 
 
-def make_recalled(via: RecallSource, score: float = 0.5) -> Recalled:
-    return Recalled(memory=make_memory(), score=score, via=via)
+def make_recalled(via: RecallSource, score: float = 0.5, confidence: float = 0.5) -> Recalled:
+    return Recalled(memory=make_memory(), score=score, confidence=confidence, via=via)
+
+
+def test_recalled_separates_ranking_strength_from_confidence() -> None:
+    # The two answer different questions, so they are allowed to disagree: an
+    # association can rank well on graph evidence while matching the query text
+    # poorly. Collapsing them into one number is what made `score` unusable.
+    recalled = make_recalled("association", score=0.9, confidence=0.1)
+    assert (recalled.score, recalled.confidence) == (0.9, 0.1)
+    with pytest.raises(pydantic.ValidationError):
+        make_recalled("search", confidence=1.5)
 
 
 def test_memory_defaults() -> None:

@@ -23,6 +23,10 @@ MAX_SIMULATED_DAYS = 3650.0
 # Holdout replays behind the diversity gate. Two reproduces the original
 # single-repeat probe; more passes distinguish settling from compounding.
 MAX_DIVERSITY_PASSES = 10
+# Pre-registered before implementing calibration: a randomly chosen correct
+# answer must outscore a randomly chosen distractor at least this often, or the
+# confidence field cannot be thresholded and should not be claimed.
+MIN_CONFIDENCE_AUC = 0.80
 MAX_TOP_K = 100
 MAX_MANIFEST_FILES = 5
 MAX_DATA_FILE_BYTES = 2_000_000

@@ -29,6 +29,26 @@ Pass `embedding_fn` to `Synaptic` to use a local or hosted embedding provider.
 The function must accept a string and return a numeric sequence with a stable
 dimension.
 
+## Knowing when there is no answer
+
+Each result carries two numbers, and they answer different questions. `score`
+ranks results within one recall. `confidence` measures how well a memory
+matches the query, on an absolute scale you can threshold across queries:
+
+```python
+result = memories.recall("deployment requirements for Client X")
+relevant = [item for item in result.memories if item.confidence >= 0.6]
+```
+
+On the in-repository benchmark, a 0.6 threshold kept 41 of 42 correct answers
+and rejected all 12 questions the corpus could not answer. Filtering this way
+is how an agent avoids acting on ten plausible-looking memories for a question
+with no answer.
+
+Association results score low on `confidence` — weak textual similarity is
+exactly why keyword and vector search missed them. Treat the threshold as a
+dial: raise it for direct matches only, lower it to admit associations.
+
 ## Development
 
 SynapticDB requires Python 3.10 or newer. Create or update the development

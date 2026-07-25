@@ -70,9 +70,7 @@ def test_remember_seeds_top_three_semantic_edges() -> None:
         newest = memory._remember_at("alpha newest", None, started + timedelta(seconds=601 * 4))
         edges = memory._store.list_edges_for_node(newest.id)
         assert len(edges) == 3
-        assert {edge.a if edge.b == newest.id else edge.b for edge in edges} == {
-            item.id for item in existing[:3]
-        }
+        assert {edge.a if edge.b == newest.id else edge.b for edge in edges} == {item.id for item in existing[:3]}
         assert all(edge.origin == "semantic" and edge.weight == 0.25 for edge in edges)
 
 
@@ -350,6 +348,53 @@ def test_recall_persists_energies_for_activated_non_results() -> None:
         assert [item.memory.id for item in result.memories] == [anchor.id]
         assert hidden.id in stored.energies
         assert stored.energies[hidden.id] == pytest.approx(0.8)
+
+
+def test_confidence_reports_similarity_not_rank_position() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        close = memory._remember_at("alpha alpha alpha", None, started)
+        far = memory._remember_at("gamma gamma gamma", None, started + timedelta(seconds=3600))
+
+        result = memory._recall_at("alpha", 10, None, started + timedelta(seconds=7200))
+        by_id = {item.memory.id: item for item in result.memories}
+        # The query is pure alpha: the alpha memory matches it exactly, the
+        # gamma one is orthogonal. That is what confidence should say, whatever
+        # the ranking does.
+        assert by_id[close.id].confidence == pytest.approx(1.0)
+        assert by_id[far.id].confidence == pytest.approx(0.0)
+
+
+def test_confidence_does_not_drift_with_graph_state() -> None:
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+        anchor = memory._remember_at("alpha one", None, started)
+        memory._remember_at("alpha two", None, started + timedelta(seconds=601))
+
+        first = memory._recall_at("alpha", 10, None, started + timedelta(seconds=1200))
+        # Several recalls later the graph has grown and maturity has moved. The
+        # old `score` field tracked exactly that; confidence must not.
+        for offset in range(1300, 1800, 100):
+            memory._recall_at("alpha", 10, None, started + timedelta(seconds=offset))
+        last = memory._recall_at("alpha", 10, None, started + timedelta(seconds=1900))
+
+        before = {r.memory.id: r.confidence for r in first.memories}[anchor.id]
+        after = {r.memory.id: r.confidence for r in last.memories}[anchor.id]
+        assert before == pytest.approx(after)
+
+
+def test_confidence_is_clamped_to_the_unit_scale() -> None:
+    def signed(text: str) -> Sequence[float]:
+        # Opposed vectors give a negative cosine, which must not surface as a
+        # negative confidence: unrelated is 0.0, never anti-relevant.
+        return (-1.0, 0.0) if "gamma" in text else (1.0, 0.0)
+
+    started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
+    with Synaptic(":memory:", embedding_fn=signed) as memory:
+        opposed = memory._remember_at("gamma opposite", None, started)
+        result = memory._recall_at("alpha", 10, None, started + timedelta(seconds=3600))
+        confidence = {r.memory.id: r.confidence for r in result.memories}[opposed.id]
+        assert confidence == 0.0
 
 
 def test_where_filter_requires_present_equal_metadata() -> None:

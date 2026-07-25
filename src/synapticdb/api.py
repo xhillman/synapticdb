@@ -157,8 +157,7 @@ class Synaptic:
             scores = tuple((hit.memory_id, hit.score) for hit in candidates)
             semantic_ids = semantic_seed_ids(scores, semantic)
             semantic_seeds = tuple(
-                EdgeSeed(memory_id, semantic.initial_weight, "semantic", rate)
-                for memory_id in semantic_ids
+                EdgeSeed(memory_id, semantic.initial_weight, "semantic", rate) for memory_id in semantic_ids
             )
         temporal = temporal_link_config(self._params)
         temporal_ids = self._store.recent_memory_ids(
@@ -167,8 +166,7 @@ class Synaptic:
             limit=temporal.max_links,
         )
         temporal_seeds = tuple(
-            EdgeSeed(memory_id, temporal.initial_weight, "temporal", rate)
-            for memory_id in temporal_ids
+            EdgeSeed(memory_id, temporal.initial_weight, "temporal", rate) for memory_id in temporal_ids
         )
         return semantic_seeds + temporal_seeds
 
@@ -214,8 +212,18 @@ class Synaptic:
         )
         if pair_seeds:
             self._confidence.invalidate()
+        # Cosine against the query, looked up for the selected results rather
+        # than taken from semantic_search: a result can arrive through keyword
+        # search or activation without entering the semantic top-k.
+        similarities = self._store.similarities(embedding, selected_ids)
         recalled = [
-            Recalled(memory=memory, score=selected[memory.id].score, via=selected[memory.id].via)
+            Recalled(
+                memory=memory,
+                score=selected[memory.id].score,
+                # A negative cosine means unrelated, not anti-relevant.
+                confidence=max(0.0, min(1.0, similarities.get(memory.id, 0.0))),
+                via=selected[memory.id].via,
+            )
             for memory in memories
         ]
         latency_ms = (time.perf_counter() - started) * 1000.0
@@ -246,9 +254,7 @@ class Synaptic:
         fused_scores = min_max_normalize({hit.memory_id: hit.score for hit in fused})
         summary = self._store.graph_summary(half_life_days=self._half_life_days(), now=now)
         maturity = self._maturity(summary)
-        seeds = tuple(
-            (hit.memory_id, fused_scores[hit.memory_id]) for hit in fused[: spreading.seeds]
-        )
+        seeds = tuple((hit.memory_id, fused_scores[hit.memory_id]) for hit in fused[: spreading.seeds])
         activation = spread_activation(
             seeds,
             partial(self._activation_neighbors_at, now),
@@ -402,9 +408,7 @@ class Synaptic:
                 continue
             if positive:
                 weight, reinforce_rate = positive_feedback_seed(first, second, rate)
-                seeds.append(
-                    PairSeed(target.first_id, target.second_id, weight, "co_retrieval", reinforce_rate)
-                )
+                seeds.append(PairSeed(target.first_id, target.second_id, weight, "co_retrieval", reinforce_rate))
                 continue
             # Read at `now`, so the weakening builds on the weight this
             # feedback saw rather than one decayed to the wall clock.
