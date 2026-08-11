@@ -6,9 +6,11 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from synapticdb import InvalidArgumentError, NotFoundError, Synaptic
+import synapticdb.api as api_module
+from synapticdb import EmbeddingError, InvalidArgumentError, NotFoundError, Synaptic
 from synapticdb.learning import LINKED_RESULT_COUNT, SEMANTIC_SEED_CALIBRATION, default_parameters
 from synapticdb.retrieval import min_max_normalize, reciprocal_rank_fusion
+from synapticdb.store import Store
 
 
 def embedding(text: str) -> Sequence[float]:
@@ -623,6 +625,65 @@ def test_forget_stats_and_context_manager() -> None:
             memory.forget(uuid4())
     with pytest.raises(RuntimeError, match="closed"):
         memory.stats()
+
+
+def test_closed_instance_rejects_operations_before_validation_or_embedding() -> None:
+    embedded: list[str] = []
+
+    def tracked_embedding(text: str) -> Sequence[float]:
+        embedded.append(text)
+        return (1.0, 0.0)
+
+    memory = Synaptic(":memory:", embedding_fn=tracked_embedding)
+    memory.close()
+    invalid_id = cast(UUID, "not-a-uuid")
+    calls = (
+        lambda: memory.remember(""),
+        lambda: memory.recall("", top_k=0, min_confidence=cast(float, "invalid")),
+        lambda: memory.feedback(invalid_id, positive=cast(bool, "invalid")),
+        lambda: memory.connect(invalid_id, invalid_id),
+        lambda: memory.forget(invalid_id),
+        memory.stats,
+        memory.__enter__,
+    )
+    for call in calls:
+        with pytest.raises(RuntimeError, match=r"^Synaptic instance is closed$"):
+            call()
+    memory.close()
+    memory.__exit__(None, None, None)
+    assert embedded == []
+
+
+def test_context_exit_closes_after_an_error() -> None:
+    memory = Synaptic(":memory:", embedding_fn=embedding)
+    with pytest.raises(LookupError, match="context failed"), memory:
+        raise LookupError("context failed")
+    with pytest.raises(RuntimeError, match=r"^Synaptic instance is closed$"):
+        memory.stats()
+
+
+def test_constructor_closes_store_and_preserves_embedder_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = Store(":memory:")
+    original_error = EmbeddingError("embedder construction failed")
+
+    def fail_embedder(
+        embedding_fn: object,
+        *,
+        expected_dimension: int | None,
+    ) -> None:
+        del embedding_fn, expected_dimension
+        raise original_error
+
+    monkeypatch.setattr(api_module, "Store", lambda _db_path: store)
+    monkeypatch.setattr(api_module, "Embedder", fail_embedder)
+    try:
+        with pytest.raises(EmbeddingError) as raised:
+            Synaptic(":memory:", embedding_fn=embedding)
+        assert raised.value is original_error
+        with pytest.raises(RuntimeError, match=r"^store is closed$"):
+            store.embedding_dimension()
+    finally:
+        store.close()
 
 
 @pytest.mark.parametrize("top_k", [0, 101, True])
