@@ -8,7 +8,7 @@ import pytest
 
 import synapticdb.api as api_module
 from synapticdb import EmbeddingError, InvalidArgumentError, NotFoundError, Synaptic
-from synapticdb.learning import LINKED_RESULT_COUNT, SEMANTIC_SEED_CALIBRATION, default_parameters
+from synapticdb.learning import LINKED_RESULT_COUNT, SEMANTIC_SEED_CALIBRATION, default_parameters, runtime_policy
 from synapticdb.retrieval import min_max_normalize, reciprocal_rank_fusion
 from synapticdb.store import Store
 
@@ -19,6 +19,11 @@ def embedding(text: str) -> Sequence[float]:
         float(lowered.count("alpha") + lowered.count("beta")),
         float(lowered.count("gamma") + lowered.count("delta")),
     )
+
+
+def configured_memory(**overrides: object) -> Synaptic:
+    """Build a private-policy runtime for behavior tests."""
+    return Synaptic._with_policy(":memory:", embedding, runtime_policy(overrides))
 
 
 def test_remember_recall_and_dedupe_form_a_walking_skeleton() -> None:
@@ -60,8 +65,7 @@ def test_semantic_seeding_is_disabled_by_default() -> None:
 
 def test_remember_seeds_top_three_semantic_edges() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
-        memory._params["semantic_seed"] = SEMANTIC_SEED_CALIBRATION
+    with configured_memory(semantic_seed=SEMANTIC_SEED_CALIBRATION) as memory:
         existing = tuple(
             memory._remember_at(
                 f"alpha memory {index}",
@@ -79,8 +83,7 @@ def test_remember_seeds_top_three_semantic_edges() -> None:
 
 def test_private_semantic_parameters_support_benchmark_calibration() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
-        memory._params["semantic_seed"] = (0.8, 1, 0.4)
+    with configured_memory(semantic_seed=(0.8, 1, 0.4)) as memory:
         first = memory._remember_at("alpha first", None, started)
         second = memory._remember_at("alpha second", None, started + timedelta(seconds=601))
         edge = memory._store.get_edge_between(first.id, second.id)
@@ -103,8 +106,7 @@ def test_remember_links_temporal_boundary_and_skips_outside_window() -> None:
 
 def test_semantic_and_temporal_overlap_reinforces_one_edge() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
-        memory._params["semantic_seed"] = SEMANTIC_SEED_CALIBRATION
+    with configured_memory(semantic_seed=SEMANTIC_SEED_CALIBRATION) as memory:
         first = memory._remember_at("alpha first", None, started)
         second = memory._remember_at("alpha second", None, started + timedelta(seconds=1))
         edge = memory._store.get_edge_between(first.id, second.id)
@@ -545,8 +547,7 @@ def test_forget_removes_a_connected_memory_and_its_edge() -> None:
 
 def test_maintenance_fires_on_the_interval_and_not_before() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
-        memory._params["maintenance_interval"] = 4
+    with configured_memory(maintenance_interval=4) as memory:
         anchor = memory._remember_at("alpha anchor", None, started)
         stale = memory._remember_at("gamma stale", None, started)
         memory._connect_at(anchor.id, stale.id, started)
@@ -565,8 +566,7 @@ def test_maintenance_fires_on_the_interval_and_not_before() -> None:
 
 def test_maintenance_keeps_edges_decay_has_not_worn_out() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
-        memory._params["maintenance_interval"] = 2
+    with configured_memory(maintenance_interval=2) as memory:
         anchor = memory._remember_at("alpha anchor", None, started)
         fresh = memory._remember_at("gamma fresh", None, started)
         memory._connect_at(anchor.id, fresh.id, started)
@@ -579,8 +579,7 @@ def test_maintenance_keeps_edges_decay_has_not_worn_out() -> None:
 
 def test_maintenance_reports_the_smaller_graph_through_stats() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
-        memory._params["maintenance_interval"] = 4
+    with configured_memory(maintenance_interval=4) as memory:
         first = memory._remember_at("alpha one", None, started)
         second = memory._remember_at("gamma two", None, started)
         memory._connect_at(first.id, second.id, started)
@@ -600,8 +599,7 @@ def test_maintenance_reports_the_smaller_graph_through_stats() -> None:
 
 def test_a_deduplicated_remember_does_not_advance_maintenance() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
-        memory._params["maintenance_interval"] = 2
+    with configured_memory(maintenance_interval=2) as memory:
         anchor = memory._remember_at("alpha anchor", None, started)
         stale = memory._remember_at("gamma stale", None, started)
         memory._connect_at(anchor.id, stale.id, started)

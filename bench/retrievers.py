@@ -14,16 +14,9 @@ from uuid import UUID
 from synapticdb import Synaptic
 from synapticdb.embeddings import EmbeddingFunction
 from synapticdb.learning import (
-    ParameterValue,
-    activation_config,
-    blend_weight,
-    co_retrieval_config,
-    connect_weight,
-    decay_config,
-    feedback_rate,
-    fusion_config,
-    semantic_seed_config,
-    temporal_link_config,
+    RuntimePolicy,
+    policy_parameters,
+    runtime_policy,
 )
 
 from .contracts import MAX_FIXTURE_DIMENSIONS, MAX_MEMORY_COUNT, MAX_RECORD_CHARS, MAX_TOP_K
@@ -147,25 +140,16 @@ class SynapticRetriever:
         embedding_name: str = "default",
         semantic_seed: tuple[float, int, float] | None = None,
         temporal_link: tuple[int, int, float] | None = None,
-        overrides: Mapping[str, ParameterValue] | None = None,
+        overrides: Mapping[str, object] | None = None,
     ) -> None:
         if not embedding_name:
             raise ValueError("embedding_name must be non-empty")
-        self._memory = Synaptic(":memory:", embedding_fn=embedding_fn)
-        if semantic_seed is not None:
-            self._memory._params["semantic_seed"] = semantic_seed
-        if temporal_link is not None:
-            self._memory._params["temporal_link"] = temporal_link
-        for key, value in (overrides or {}).items():
-            if key not in self._memory._params:
-                raise ValueError(f"unknown parameter: {key}")
-            self._memory._params[key] = value
-        # Read every group once, so a malformed override fails here rather than
-        # midway through a benchmark run.
-        _validate_parameters(self._memory._params)
+        policy = _benchmark_policy(semantic_seed, temporal_link, overrides)
+        self._memory = Synaptic._with_policy(":memory:", embedding_fn, policy)
+        parameters = policy_parameters(policy)
         self.config = SynapticConfig(
             embedding=embedding_name,
-            params={key: _json_value(value) for key, value in sorted(self._memory._params.items())},
+            params={key: _json_value(value) for key, value in sorted(parameters.items())},
         )
         self._benchmark_ids: dict[UUID, str] = {}
         self._ingested = False
@@ -262,20 +246,22 @@ class SynapticRetriever:
         self._memory.close()
 
 
-def _validate_parameters(params: Mapping[str, ParameterValue]) -> None:
-    """Read every parameter group so a bad override fails before ingest."""
-    semantic_seed_config(params)
-    temporal_link_config(params)
-    fusion_config(params)
-    activation_config(params)
-    blend_weight(params)
-    co_retrieval_config(params)
-    feedback_rate(params)
-    connect_weight(params)
-    decay_config(params)
+def _benchmark_policy(
+    semantic_seed: tuple[float, int, float] | None,
+    temporal_link: tuple[int, int, float] | None,
+    overrides: Mapping[str, object] | None,
+) -> RuntimePolicy:
+    """Build the complete policy before opening benchmark resources."""
+    selected: dict[str, object] = {}
+    if semantic_seed is not None:
+        selected["semantic_seed"] = semantic_seed
+    if temporal_link is not None:
+        selected["temporal_link"] = temporal_link
+    selected.update(overrides or {})
+    return runtime_policy(selected)
 
 
-def _json_value(value: ParameterValue) -> Any:
+def _json_value(value: object) -> Any:
     """Render one parameter for the report; tuples become JSON arrays."""
     return list(value) if isinstance(value, tuple) else value
 

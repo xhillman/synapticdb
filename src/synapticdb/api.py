@@ -16,24 +16,13 @@ from synapticdb.activation import ActivationResult, Neighbor, spread_activation
 from synapticdb.confidence import ConfidenceCache, GraphMetrics
 from synapticdb.embeddings import Embedder, EmbeddingFunction
 from synapticdb.learning import (
+    DEFAULT_RUNTIME_POLICY,
     LINKED_RESULT_COUNT,
-    ParameterValue,
-    activation_config,
-    blend_weight,
-    co_retrieval_config,
+    RuntimePolicy,
     co_retrieval_pairs,
-    connect_weight,
-    decay_config,
-    default_parameters,
-    feedback_rate,
-    fusion_config,
-    maintenance_interval,
     negative_feedback_weight,
-    passive_reinforcement_rate,
     positive_feedback_seed,
-    semantic_seed_config,
     semantic_seed_ids,
-    temporal_link_config,
     unordered_pairs,
 )
 from synapticdb.models import (
@@ -85,9 +74,29 @@ class Synaptic:
         db_path: str | Path,
         embedding_fn: EmbeddingFunction | None = None,
     ) -> None:
+        self._initialize(db_path, embedding_fn, DEFAULT_RUNTIME_POLICY)
+
+    @classmethod
+    def _with_policy(
+        cls,
+        db_path: str | Path,
+        embedding_fn: EmbeddingFunction | None,
+        policy: RuntimePolicy,
+    ) -> Synaptic:
+        """Build an internal runtime with one complete policy."""
+        instance = cls.__new__(cls)
+        instance._initialize(db_path, embedding_fn, policy)
+        return instance
+
+    def _initialize(
+        self,
+        db_path: str | Path,
+        embedding_fn: EmbeddingFunction | None,
+        policy: RuntimePolicy,
+    ) -> None:
         self._store = Store(db_path)
         self._confidence = ConfidenceCache()
-        self._params: dict[str, ParameterValue] = default_parameters()
+        self._policy = policy
         try:
             self._embedder = Embedder(
                 embedding_fn,
@@ -143,9 +152,9 @@ class Synaptic:
         accumulating dead edges indefinitely, which is worse than a loud
         failure; the memory itself is already committed either way.
         """
-        if remember_count % maintenance_interval(self._params) != 0:
+        if remember_count % self._policy.maintenance_interval != 0:
             return
-        decay = decay_config(self._params)
+        decay = self._policy.decay
         pruned = self._store.prune_weak_edges(
             decay.prune_threshold,
             now=now,
@@ -160,10 +169,10 @@ class Synaptic:
         embedding: Sequence[float],
         created_at: datetime,
     ) -> tuple[EdgeSeed, ...]:
-        rate = passive_reinforcement_rate(self._params)
+        rate = self._policy.co_retrieval.reinforcement_rate
         # Semantic seeding is off by default (disabled on benchmark evidence);
         # only runs the extra semantic_search when explicitly re-enabled.
-        semantic = semantic_seed_config(self._params)
+        semantic = self._policy.semantic_seed
         semantic_seeds: tuple[EdgeSeed, ...] = ()
         if semantic is not None:
             candidates = self._store.semantic_search(embedding, limit=semantic.max_links)
@@ -172,7 +181,7 @@ class Synaptic:
             semantic_seeds = tuple(
                 EdgeSeed(memory_id, semantic.initial_weight, "semantic", rate) for memory_id in semantic_ids
             )
-        temporal = temporal_link_config(self._params)
+        temporal = self._policy.temporal_link
         temporal_ids = self._store.recent_memory_ids(
             before=created_at,
             window_seconds=temporal.window_seconds,
@@ -274,8 +283,8 @@ class Synaptic:
         embedding: Sequence[float],
         now: datetime,
     ) -> tuple[tuple[BlendedHit, ...], ActivationResult, float]:
-        fusion = fusion_config(self._params)
-        spreading = activation_config(self._params)
+        fusion = self._policy.fusion
+        spreading = self._policy.activation
         keyword = self._store.keyword_search(text, limit=fusion.candidate_depth)
         semantic = self._store.semantic_search(embedding, limit=fusion.candidate_depth)
         fused = reciprocal_rank_fusion(
@@ -299,7 +308,7 @@ class Synaptic:
             fused_scores,
             activation_scores,
             maturity,
-            blend_weight(self._params),
+            self._policy.activation_blend_weight,
             seed_ids=tuple(memory_id for memory_id, _ in seeds),
         )
         return ranked, activation, maturity
@@ -320,7 +329,7 @@ class Synaptic:
 
     def _co_retrieval_seeds(self, result_ids: Sequence[UUID]) -> tuple[PairSeed, ...]:
         """Build the PRD §6.3 edges linking the top results of one recall."""
-        config = co_retrieval_config(self._params)
+        config = self._policy.co_retrieval
         return tuple(
             PairSeed(
                 first_id,
@@ -333,7 +342,7 @@ class Synaptic:
         )
 
     def _half_life_days(self) -> float:
-        return float(decay_config(self._params).half_life_days)
+        return float(self._policy.decay.half_life_days)
 
     def _select_results(
         self,
@@ -371,7 +380,7 @@ class Synaptic:
             raise InvalidArgumentError("positive must be a boolean")
         query = self._store.get_query(query_id)
         pairs = self._feedback_pairs(query, now)
-        rate = feedback_rate(self._params)
+        rate = self._policy.feedback_rate
         seeds, updates = self._feedback_updates(pairs, query.energies, rate, positive, now)
         self._store.apply_feedback(
             query_id,
@@ -474,7 +483,7 @@ class Synaptic:
         self._store.assert_edge(
             first_id,
             second_id,
-            connect_weight(self._params),
+            self._policy.connect_weight,
             "explicit",
             asserted_at=now,
             half_life_days=self._half_life_days(),

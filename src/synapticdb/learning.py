@@ -6,12 +6,11 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import cast
 from uuid import UUID
 
 from synapticdb.activation import ActivationConfig
 from synapticdb.models import InvalidArgumentError, unit_float
-
-ParameterValue = float | int | tuple[float | int, ...] | None
 
 # PRD section 6.4 half-life, in days. Store methods default to this value so a
 # caller that does not sweep parameters still applies the specified decay.
@@ -36,12 +35,12 @@ _CO_RETRIEVAL_SEED_WEIGHT = 0.05
 _FEEDBACK_EDGE_FLOOR = 0.02
 
 # Calibration values for semantic seeding (PRD §6.1 / §9 group 11). Semantic
-# seeding is DISABLED by default (see default_parameters): the full-corpus
+# seeding is DISABLED by default (see DEFAULT_RUNTIME_POLICY): the full-corpus
 # benchmark showed it contributes +0 associative unique wins at every threshold
 # from 0.6 to 0.85 — embedding similarity is orthogonal to the benchmark's
 # associative chains, so its edges only duplicate what vector search already
 # ranks together. This tuple re-enables it for calibration / future A/Bs by
-# assigning it to _params["semantic_seed"]. See bench/README.md for the evidence.
+# building an internal policy override. See bench/README.md for the evidence.
 SEMANTIC_SEED_CALIBRATION: tuple[float, int, float] = (0.6, 3, 0.25)
 
 
@@ -77,114 +76,21 @@ class DecayConfig:
     prune_threshold: float
 
 
-def default_parameters() -> dict[str, ParameterValue]:
-    """Return the 17 private parameter groups from PRD section 9."""
-    return {
-        "top_k": 10,
-        "candidate_depth": 40,
-        "rrf_k": 60,
-        "activation_seeds": 5,
-        "activation_max_steps": 5,
-        "activation_decay": 0.2,
-        "activation_min_energy": 0.05,
-        "hop_bonus": 0.15,
-        "seed_penalty": 0.2,
-        "activation_blend_weight": 0.45,
-        "semantic_seed": None,  # disabled by benchmark evidence; see SEMANTIC_SEED_CALIBRATION
-        "temporal_link": (600, 3, 0.2),
-        "co_retrieval": (0.05, 0.05),
-        "feedback_rate": 0.15,
-        "connect_weight": 0.5,
-        "decay_and_prune": (30, 0.02),
-        "maintenance_interval": 100,
-    }
+@dataclass(frozen=True, slots=True)
+class RuntimePolicy:
+    """The complete validated policy used by one Synaptic runtime."""
 
-
-def semantic_seed_config(params: Mapping[str, ParameterValue]) -> SemanticSeedConfig | None:
-    """Read the semantic seed parameter group; None means the mechanism is off."""
-    if params.get("semantic_seed") is None:
-        return None
-    value = _group_value(params, "semantic_seed", 3, "threshold, max links, and weight")
-    return SemanticSeedConfig(
-        unit_float(value[0], "semantic seed threshold"),
-        _bounded_int(value[1], "semantic seed max links", 40),
-        unit_float(value[2], "semantic seed weight"),
-    )
-
-
-def temporal_link_config(params: Mapping[str, ParameterValue]) -> TemporalLinkConfig:
-    """Read and validate the temporal link parameter group."""
-    value = _group_value(params, "temporal_link", 3, "window, max links, and weight")
-    return TemporalLinkConfig(
-        _bounded_int(value[0], "temporal window", 86_400),
-        _bounded_int(value[1], "temporal max links", 40),
-        unit_float(value[2], "temporal link weight"),
-    )
-
-
-def decay_config(params: Mapping[str, ParameterValue]) -> DecayConfig:
-    """Read and validate the decay and prune parameter group."""
-    value = _group_value(params, "decay_and_prune", 2, "half-life days and prune threshold")
-    return DecayConfig(
-        _bounded_int(value[0], "decay half-life days", _MAX_HALF_LIFE_DAYS),
-        unit_float(value[1], "prune threshold"),
-    )
-
-
-def co_retrieval_config(params: Mapping[str, ParameterValue]) -> CoRetrievalConfig:
-    """Read and validate the co-retrieval parameter group."""
-    value = _group_value(params, "co_retrieval", 2, "initial weight and reinforcement rate")
-    return CoRetrievalConfig(
-        unit_float(value[0], "co-retrieval initial weight"),
-        unit_float(value[1], "passive reinforcement rate"),
-    )
-
-
-def feedback_rate(params: Mapping[str, ParameterValue]) -> float:
-    """Read and validate the explicit feedback rate."""
-    return unit_float(_single_value(params, "feedback_rate"), "feedback rate")
-
-
-def fusion_config(params: Mapping[str, ParameterValue]) -> FusionConfig:
-    """Read and validate the candidate depth and RRF constant."""
-    # retrieval._MAX_RANKING_LENGTH rejects a ranking longer than 100, so the
-    # depth is bounded here to fail with a clear message instead of deep inside
-    # reciprocal_rank_fusion.
-    depth = _bounded_int(_single_value(params, "candidate_depth"), "candidate depth", 100)
-    rrf_k = _bounded_int(_single_value(params, "rrf_k"), "rrf k", 10_000)
-    return FusionConfig(depth, rrf_k)
-
-
-def activation_config(params: Mapping[str, ParameterValue]) -> ActivationConfig:
-    """Read and validate the six PRD §5.2 spreading parameters."""
-    return ActivationConfig(
-        seeds=_bounded_int(_single_value(params, "activation_seeds"), "activation seeds", 100),
-        max_steps=_bounded_int(_single_value(params, "activation_max_steps"), "activation max steps", 20),
-        decay=unit_float(_single_value(params, "activation_decay"), "activation decay"),
-        min_energy=unit_float(_single_value(params, "activation_min_energy"), "activation min energy"),
-        hop_bonus=unit_float(_single_value(params, "hop_bonus"), "hop bonus"),
-        seed_penalty=unit_float(_single_value(params, "seed_penalty"), "seed penalty"),
-    )
-
-
-def blend_weight(params: Mapping[str, ParameterValue]) -> float:
-    """Read and validate the alpha ceiling applied to activation (PRD §5.3)."""
-    return unit_float(_single_value(params, "activation_blend_weight"), "activation blend weight")
-
-
-def connect_weight(params: Mapping[str, ParameterValue]) -> float:
-    """Read and validate the weight an explicit connect asserts."""
-    return unit_float(_single_value(params, "connect_weight"), "connect weight")
-
-
-def maintenance_interval(params: Mapping[str, ParameterValue]) -> int:
-    """Read how many inserts pass between maintenance runs (PRD §6.5)."""
-    return _bounded_int(_single_value(params, "maintenance_interval"), "maintenance interval", 100_000)
-
-
-def passive_reinforcement_rate(params: Mapping[str, ParameterValue]) -> float:
-    """Return the passive reinforcement rate shared by learning mechanisms."""
-    return co_retrieval_config(params).reinforcement_rate
+    top_k: int
+    fusion: FusionConfig
+    activation: ActivationConfig
+    activation_blend_weight: float
+    semantic_seed: SemanticSeedConfig | None
+    temporal_link: TemporalLinkConfig
+    co_retrieval: CoRetrievalConfig
+    feedback_rate: float
+    connect_weight: float
+    decay: DecayConfig
+    maintenance_interval: int
 
 
 def semantic_seed_ids(
@@ -309,29 +215,169 @@ def effective_weight(
     return decayed_weight(weight, days_elapsed, half_life_days)
 
 
-def _single_value(params: Mapping[str, ParameterValue], key: str) -> float | int:
-    """Read one scalar parameter group, rejecting a tuple or a missing entry."""
-    value = params.get(key)
+def _single_parameter(value: object, key: str) -> float | int:
+    """Validate one raw scalar parameter at the benchmark boundary."""
     if value is None or isinstance(value, tuple):
         raise InvalidArgumentError(f"{key} must be a single number")
-    return value
+    return cast(float | int, value)
 
 
-def _group_value(
-    params: Mapping[str, ParameterValue],
+def _group_parameter(
+    value: object,
     key: str,
     size: int,
     contents: str,
 ) -> tuple[float | int, ...]:
-    """Read one multi-value parameter group of exactly `size` entries.
-
-    The tuple sibling of _single_value: `contents` names the fields so a
-    malformed override says what it should have contained.
-    """
-    value = params.get(key)
+    """Validate one raw grouped parameter at the benchmark boundary."""
     if not isinstance(value, tuple) or len(value) != size:
         raise InvalidArgumentError(f"{key} must contain {contents}")
+    return cast(tuple[float | int, ...], value)
+
+
+def _validated_unit(value: float | int, label: str) -> float:
+    unit_float(value, label)
     return value
+
+
+def _unit_parameter(parameters: Mapping[str, object], key: str, label: str) -> float:
+    value = _single_parameter(parameters[key], key)
+    return _validated_unit(value, label)
+
+
+def _fusion_parameter(parameters: Mapping[str, object]) -> FusionConfig:
+    # retrieval._MAX_RANKING_LENGTH rejects a ranking longer than 100, so the
+    # policy fails here instead of deep inside reciprocal_rank_fusion.
+    depth = _bounded_int(_single_parameter(parameters["candidate_depth"], "candidate_depth"), "candidate depth", 100)
+    rrf_k = _bounded_int(_single_parameter(parameters["rrf_k"], "rrf_k"), "rrf k", 10_000)
+    return FusionConfig(depth, rrf_k)
+
+
+def _activation_parameter(parameters: Mapping[str, object]) -> ActivationConfig:
+    return ActivationConfig(
+        seeds=_bounded_int(
+            _single_parameter(parameters["activation_seeds"], "activation_seeds"), "activation seeds", 100
+        ),
+        max_steps=_bounded_int(
+            _single_parameter(parameters["activation_max_steps"], "activation_max_steps"),
+            "activation max steps",
+            20,
+        ),
+        decay=_unit_parameter(parameters, "activation_decay", "activation decay"),
+        min_energy=_unit_parameter(parameters, "activation_min_energy", "activation min energy"),
+        hop_bonus=_unit_parameter(parameters, "hop_bonus", "hop bonus"),
+        seed_penalty=_unit_parameter(parameters, "seed_penalty", "seed penalty"),
+    )
+
+
+def _semantic_seed_parameter(value: object) -> SemanticSeedConfig | None:
+    if value is None:
+        return None
+    group = _group_parameter(value, "semantic_seed", 3, "threshold, max links, and weight")
+    return SemanticSeedConfig(
+        _validated_unit(group[0], "semantic seed threshold"),
+        _bounded_int(group[1], "semantic seed max links", 40),
+        _validated_unit(group[2], "semantic seed weight"),
+    )
+
+
+def _temporal_link_parameter(value: object) -> TemporalLinkConfig:
+    group = _group_parameter(value, "temporal_link", 3, "window, max links, and weight")
+    return TemporalLinkConfig(
+        _bounded_int(group[0], "temporal window", 86_400),
+        _bounded_int(group[1], "temporal max links", 40),
+        _validated_unit(group[2], "temporal link weight"),
+    )
+
+
+def _co_retrieval_parameter(value: object) -> CoRetrievalConfig:
+    group = _group_parameter(value, "co_retrieval", 2, "initial weight and reinforcement rate")
+    return CoRetrievalConfig(
+        _validated_unit(group[0], "co-retrieval initial weight"),
+        _validated_unit(group[1], "passive reinforcement rate"),
+    )
+
+
+def _decay_parameter(value: object) -> DecayConfig:
+    group = _group_parameter(value, "decay_and_prune", 2, "half-life days and prune threshold")
+    return DecayConfig(
+        _bounded_int(group[0], "decay half-life days", _MAX_HALF_LIFE_DAYS),
+        _validated_unit(group[1], "prune threshold"),
+    )
+
+
+def policy_parameters(policy: RuntimePolicy) -> dict[str, object]:
+    """Return the stable 17-key benchmark representation of a policy."""
+    return {
+        "top_k": policy.top_k,
+        "candidate_depth": policy.fusion.candidate_depth,
+        "rrf_k": policy.fusion.rrf_k,
+        "activation_seeds": policy.activation.seeds,
+        "activation_max_steps": policy.activation.max_steps,
+        "activation_decay": policy.activation.decay,
+        "activation_min_energy": policy.activation.min_energy,
+        "hop_bonus": policy.activation.hop_bonus,
+        "seed_penalty": policy.activation.seed_penalty,
+        "activation_blend_weight": policy.activation_blend_weight,
+        "semantic_seed": None
+        if policy.semantic_seed is None
+        else (policy.semantic_seed.threshold, policy.semantic_seed.max_links, policy.semantic_seed.initial_weight),
+        "temporal_link": (
+            policy.temporal_link.window_seconds,
+            policy.temporal_link.max_links,
+            policy.temporal_link.initial_weight,
+        ),
+        "co_retrieval": (policy.co_retrieval.initial_weight, policy.co_retrieval.reinforcement_rate),
+        "feedback_rate": policy.feedback_rate,
+        "connect_weight": policy.connect_weight,
+        "decay_and_prune": (policy.decay.half_life_days, policy.decay.prune_threshold),
+        "maintenance_interval": policy.maintenance_interval,
+    }
+
+
+DEFAULT_RUNTIME_POLICY = RuntimePolicy(
+    top_k=10,
+    fusion=FusionConfig(40, 60),
+    activation=ActivationConfig(),
+    activation_blend_weight=0.45,
+    semantic_seed=None,
+    temporal_link=TemporalLinkConfig(600, 3, 0.2),
+    co_retrieval=CoRetrievalConfig(0.05, 0.05),
+    feedback_rate=0.15,
+    connect_weight=0.5,
+    decay=DecayConfig(30, 0.02),
+    maintenance_interval=100,
+)
+
+
+def default_parameters() -> dict[str, object]:
+    """Return the 17-key benchmark representation of the default policy."""
+    return policy_parameters(DEFAULT_RUNTIME_POLICY)
+
+
+def runtime_policy(overrides: Mapping[str, object] | None = None) -> RuntimePolicy:
+    """Build one complete policy from bounded benchmark overrides."""
+    parameters = default_parameters()
+    for key, value in (overrides or {}).items():
+        if key not in parameters:
+            raise ValueError(f"unknown parameter: {key}")
+        parameters[key] = value
+    return RuntimePolicy(
+        top_k=_bounded_int(_single_parameter(parameters["top_k"], "top_k"), "top_k", 100),
+        fusion=_fusion_parameter(parameters),
+        activation=_activation_parameter(parameters),
+        activation_blend_weight=_unit_parameter(parameters, "activation_blend_weight", "activation blend weight"),
+        semantic_seed=_semantic_seed_parameter(parameters["semantic_seed"]),
+        temporal_link=_temporal_link_parameter(parameters["temporal_link"]),
+        co_retrieval=_co_retrieval_parameter(parameters["co_retrieval"]),
+        feedback_rate=_unit_parameter(parameters, "feedback_rate", "feedback rate"),
+        connect_weight=_unit_parameter(parameters, "connect_weight", "connect weight"),
+        decay=_decay_parameter(parameters["decay_and_prune"]),
+        maintenance_interval=_bounded_int(
+            _single_parameter(parameters["maintenance_interval"], "maintenance_interval"),
+            "maintenance interval",
+            100_000,
+        ),
+    )
 
 
 def _bounded_int(value: float | int, label: str, maximum: int) -> int:

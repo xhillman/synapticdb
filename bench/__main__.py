@@ -8,7 +8,7 @@ import os
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from synapticdb.learning import ParameterValue, default_parameters
+from synapticdb.learning import default_parameters
 
 from .baseline import LockedBaseline
 from .contracts import MAX_SEED_COUNT, MAX_SEED_TEXT_CHARS, MAX_TOP_K
@@ -75,12 +75,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _parse_overrides(entries: Sequence[str]) -> dict[str, ParameterValue]:
+def _parse_overrides(entries: Sequence[str]) -> dict[str, object]:
     """Parse repeated KEY=JSON overrides against the known parameter budget."""
     if len(entries) > MAX_PARAM_OVERRIDES:
         raise ValueError(f"--param accepts at most {MAX_PARAM_OVERRIDES} overrides")
     known = default_parameters()
-    overrides: dict[str, ParameterValue] = {}
+    overrides: dict[str, object] = {}
     for entry in entries:
         key, separator, raw = entry.partition("=")
         if not separator or not key:

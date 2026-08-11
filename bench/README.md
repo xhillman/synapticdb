@@ -233,7 +233,7 @@ gate would stop measuring generalization. Exercising feedback honestly needs
 warm-up queries that are topically distinct yet traverse the same chains — a
 dataset design problem, not a parameter to tune.
 
-**Semantic seeding is disabled by default** (`_params["semantic_seed"] = None`).
+**Semantic seeding is disabled by default** (`DEFAULT_RUNTIME_POLICY.semantic_seed is None`).
 A full-corpus A/B and a threshold sweep showed it contributes +0 unique wins at
 every threshold from 0.60 to 0.85: temporal-only and semantic+temporal both
 score 7/25, because embedding similarity is orthogonal to the benchmark's
@@ -241,8 +241,8 @@ associative chains (a 0.60 threshold produced 1069 semantic edges, only 4 of
 them on real chains). Per the merge-gate rule (a mechanism ships only if it
 improves the benchmark), it does not ship enabled. The code and
 `SEMANTIC_SEED_CALIBRATION` values remain; pass `--semantic-threshold` to the
-bench (or set `_params["semantic_seed"]`) to re-run the A/B in a later phase —
-e.g. once co-retrieval and feedback might reinforce a useful edge subset.
+bench to re-run the A/B in a later phase — e.g. once co-retrieval and feedback
+might reinforce a useful edge subset.
 
 Gold relevance IDs, required path IDs, and corpus `linked_memory_ids` are
 owned by the evaluator. Retriever implementations receive none of them. Phase

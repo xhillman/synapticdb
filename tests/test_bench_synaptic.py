@@ -17,7 +17,7 @@ from bench.retrievers import (
     _fixture_embedding,
 )
 from synapticdb import InvalidArgumentError
-from synapticdb.learning import ParameterValue, default_parameters
+from synapticdb.learning import default_parameters
 
 ROOT = Path(__file__).parents[1]
 
@@ -41,7 +41,7 @@ EXPECTED_REPORTED_PARAMS: dict[str, object] = {
     "top_k": 10,
 }
 
-VALID_PARAMETER_OVERRIDES: tuple[tuple[str, ParameterValue, object], ...] = (
+VALID_PARAMETER_OVERRIDES: tuple[tuple[str, object, object], ...] = (
     ("top_k", 7, 7),
     ("candidate_depth", 30, 30),
     ("rrf_k", 50, 50),
@@ -124,7 +124,7 @@ def test_synaptic_retriever_applies_benchmark_semantic_parameters() -> None:
 @pytest.mark.parametrize(("key", "value", "recorded"), VALID_PARAMETER_OVERRIDES)
 def test_synaptic_retriever_accepts_and_records_each_parameter(
     key: str,
-    value: ParameterValue,
+    value: object,
     recorded: object,
 ) -> None:
     retriever = SynapticRetriever(
@@ -166,6 +166,18 @@ def test_synaptic_retriever_rejects_unknown_and_invalid_parameters_during_constr
             embedding_name="fixture",
             overrides={"activation_blend_weight": 5.0},
         )
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("top_k", 0, "top_k must be between 1 and 100"),
+        ("maintenance_interval", 0, "maintenance interval must be between 1 and 100000"),
+    ],
+)
+def test_all_invalid_parameters_fail_during_construction(key: str, value: object, message: str) -> None:
+    with pytest.raises(InvalidArgumentError, match=f"^{re.escape(message)}$"):
+        SynapticRetriever(_fixture_embedding, embedding_name="fixture", overrides={key: value})
 
 
 def test_parse_overrides_accepts_the_complete_parameter_budget() -> None:

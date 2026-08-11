@@ -1,4 +1,4 @@
-from collections.abc import Callable, Mapping
+from dataclasses import FrozenInstanceError
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -11,28 +11,17 @@ from synapticdb.learning import (
     CoRetrievalConfig,
     DecayConfig,
     FusionConfig,
-    ParameterValue,
     SemanticSeedConfig,
     TemporalLinkConfig,
-    activation_config,
-    blend_weight,
-    co_retrieval_config,
     co_retrieval_pairs,
-    connect_weight,
-    decay_config,
     decayed_weight,
     default_parameters,
     effective_weight,
-    feedback_rate,
-    fusion_config,
-    maintenance_interval,
     negative_feedback_weight,
-    passive_reinforcement_rate,
     positive_feedback_seed,
     reinforce_weight,
-    semantic_seed_config,
+    runtime_policy,
     semantic_seed_ids,
-    temporal_link_config,
     unordered_pairs,
 )
 
@@ -58,17 +47,21 @@ def test_defaults_define_exact_parameter_budget_and_semantic_group() -> None:
         "decay_and_prune": (30, 0.02),
         "maintenance_interval": 100,
     }
-    # Semantic seeding ships disabled (benchmark evidence); it is still one of
-    # the 17 parameter groups, just None-valued.
-    assert semantic_seed_config(params) is None
-    assert temporal_link_config(params) == TemporalLinkConfig(600, 3, 0.2)
-    assert passive_reinforcement_rate(params) == 0.05
+    policy = runtime_policy()
+    assert policy.semantic_seed is None
+    assert policy.temporal_link == TemporalLinkConfig(600, 3, 0.2)
+    assert policy.co_retrieval.reinforcement_rate == 0.05
 
 
 def test_semantic_seed_calibration_reenables_the_mechanism() -> None:
-    params = default_parameters()
-    params["semantic_seed"] = SEMANTIC_SEED_CALIBRATION
-    assert semantic_seed_config(params) == SemanticSeedConfig(0.6, 3, 0.25)
+    policy = runtime_policy({"semantic_seed": SEMANTIC_SEED_CALIBRATION})
+    assert policy.semantic_seed == SemanticSeedConfig(0.6, 3, 0.25)
+
+
+def test_runtime_policy_is_immutable() -> None:
+    policy = runtime_policy()
+    with pytest.raises(FrozenInstanceError):
+        policy.feedback_rate = 0.2
 
 
 def test_semantic_seed_selection_applies_threshold_and_preserves_order() -> None:
@@ -92,16 +85,14 @@ def test_passive_reinforcement_moves_weight_toward_one() -> None:
     assert reinforce_weight(0.25, 0.05) == pytest.approx(0.2875)
 
 
-def test_co_retrieval_config_reads_the_specified_weight_and_rate() -> None:
-    assert co_retrieval_config(default_parameters()) == CoRetrievalConfig(0.05, 0.05)
+def test_runtime_policy_reads_the_co_retrieval_weight_and_rate() -> None:
+    assert runtime_policy().co_retrieval == CoRetrievalConfig(0.05, 0.05)
 
 
 @pytest.mark.parametrize("group", [(0.05,), (0.05, 1.5), (-0.1, 0.05), 0.05, None])
-def test_co_retrieval_config_rejects_a_malformed_group(group: object) -> None:
-    params = default_parameters()
-    params["co_retrieval"] = group  # type: ignore[assignment]
+def test_runtime_policy_rejects_a_malformed_co_retrieval_group(group: object) -> None:
     with pytest.raises(InvalidArgumentError):
-        co_retrieval_config(params)
+        runtime_policy({"co_retrieval": group})
 
 
 def test_co_retrieval_pairs_links_every_top_result_once() -> None:
@@ -137,55 +128,39 @@ def test_co_retrieval_pairs_reject_repeated_results() -> None:
 
 
 def test_feedback_rate_reads_the_specified_value() -> None:
-    assert feedback_rate(default_parameters()) == 0.15
+    assert runtime_policy().feedback_rate == 0.15
 
 
 def test_connect_weight_reads_the_specified_value() -> None:
-    assert connect_weight(default_parameters()) == 0.5
+    assert runtime_policy().connect_weight == 0.5
 
 
 def test_maintenance_interval_reads_the_specified_value() -> None:
-    assert maintenance_interval(default_parameters()) == 100
+    assert runtime_policy().maintenance_interval == 100
 
 
 @pytest.mark.parametrize("value", [0, -1, None, (100,), 100_001])
 def test_maintenance_interval_rejects_a_malformed_value(value: object) -> None:
-    params = default_parameters()
-    params["maintenance_interval"] = value  # type: ignore[assignment]
     with pytest.raises(InvalidArgumentError):
-        maintenance_interval(params)
+        runtime_policy({"maintenance_interval": value})
 
 
 def test_the_whole_parameter_budget_is_readable() -> None:
-    params = default_parameters()
-    assert fusion_config(params) == FusionConfig(40, 60)
-    assert blend_weight(params) == 0.45
+    policy = runtime_policy()
+    assert policy.fusion == FusionConfig(40, 60)
+    assert policy.activation_blend_weight == 0.45
     # The last group to be wired: every parameter PRD §9 promises the harness
     # can sweep is now actually read.
-    assert maintenance_interval(params) == 100
-    assert activation_config(params) == ActivationConfig(
+    assert policy.maintenance_interval == 100
+    assert policy.activation == ActivationConfig(
         seeds=5, max_steps=5, decay=0.2, min_energy=0.05, hop_bonus=0.15, seed_penalty=0.2
     )
 
 
-def test_activation_accessor_returns_the_module_defaults() -> None:
+def test_runtime_policy_uses_the_activation_module_defaults() -> None:
     # The dataclass defaults are the locked constants, so reading the shipped
     # parameters must reproduce them exactly.
-    assert activation_config(default_parameters()) == ActivationConfig()
-
-
-# Each retrieval parameter and the accessor that owns it.
-RETRIEVAL_ACCESSORS: dict[str, Callable[[Mapping[str, ParameterValue]], object]] = {
-    "candidate_depth": fusion_config,
-    "rrf_k": fusion_config,
-    "activation_seeds": activation_config,
-    "activation_max_steps": activation_config,
-    "activation_decay": activation_config,
-    "activation_min_energy": activation_config,
-    "hop_bonus": activation_config,
-    "seed_penalty": activation_config,
-    "activation_blend_weight": blend_weight,
-}
+    assert runtime_policy().activation == ActivationConfig()
 
 
 @pytest.mark.parametrize(
@@ -204,26 +179,33 @@ RETRIEVAL_ACCESSORS: dict[str, Callable[[Mapping[str, ParameterValue]], object]]
     ],
 )
 def test_retrieval_parameters_reject_out_of_range_values(key: str, value: object) -> None:
-    params = default_parameters()
-    params[key] = value  # type: ignore[assignment]
     with pytest.raises(InvalidArgumentError):
-        RETRIEVAL_ACCESSORS[key](params)
+        runtime_policy({key: value})
 
 
-@pytest.mark.parametrize("key", list(RETRIEVAL_ACCESSORS))
+@pytest.mark.parametrize(
+    "key",
+    [
+        "candidate_depth",
+        "rrf_k",
+        "activation_seeds",
+        "activation_max_steps",
+        "activation_decay",
+        "activation_min_energy",
+        "hop_bonus",
+        "seed_penalty",
+        "activation_blend_weight",
+    ],
+)
 def test_scalar_retrieval_parameters_reject_a_tuple(key: str) -> None:
-    params = default_parameters()
-    params[key] = (1, 2)
     with pytest.raises(InvalidArgumentError, match="single number"):
-        RETRIEVAL_ACCESSORS[key](params)
+        runtime_policy({key: (1, 2)})
 
 
 @pytest.mark.parametrize("value", [None, (0.5, 0.5), 1.5, -0.1])
 def test_connect_weight_rejects_a_malformed_value(value: object) -> None:
-    params = default_parameters()
-    params["connect_weight"] = value  # type: ignore[assignment]
     with pytest.raises(InvalidArgumentError):
-        connect_weight(params)
+        runtime_policy({"connect_weight": value})
 
 
 def test_positive_feedback_scales_by_the_energy_product() -> None:
@@ -261,19 +243,17 @@ def test_unordered_pairs_covers_every_result_for_feedback() -> None:
     assert len(co_retrieval_pairs(ids)) == 10
 
 
-def test_decay_config_reads_the_specified_half_life_and_threshold() -> None:
-    assert decay_config(default_parameters()) == DecayConfig(30, 0.02)
+def test_runtime_policy_reads_the_decay_half_life_and_threshold() -> None:
+    assert runtime_policy().decay == DecayConfig(30, 0.02)
 
 
 @pytest.mark.parametrize(
     "group",
     [(0, 0.02), (3651, 0.02), (30, 1.5), (30,), 30, None],
 )
-def test_decay_config_rejects_a_malformed_group(group: object) -> None:
-    params = default_parameters()
-    params["decay_and_prune"] = group  # type: ignore[assignment]
+def test_runtime_policy_rejects_a_malformed_decay_group(group: object) -> None:
     with pytest.raises(InvalidArgumentError):
-        decay_config(params)
+        runtime_policy({"decay_and_prune": group})
 
 
 @pytest.mark.parametrize(

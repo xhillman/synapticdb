@@ -19,7 +19,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from synapticdb.learning import ParameterValue, default_parameters
+from synapticdb.learning import default_parameters
 
 from .baseline import LockedBaseline
 from .dataset import load_dataset
@@ -32,7 +32,7 @@ MAX_SWEEP_VALUES = 12
 
 @dataclass(frozen=True, slots=True)
 class SweepRow:
-    value: ParameterValue
+    value: object
     direct_hits: int
     associative_hits: int
     unique_wins: int
@@ -48,11 +48,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def parse_values(raw_values: Sequence[str]) -> tuple[ParameterValue, ...]:
+def parse_values(raw_values: Sequence[str]) -> tuple[object, ...]:
     """Parse JSON sweep values, bounded so one command cannot run all day."""
     if not 1 <= len(raw_values) <= MAX_SWEEP_VALUES:
         raise ValueError(f"a sweep runs 1 to {MAX_SWEEP_VALUES} values")
-    values: list[ParameterValue] = []
+    values: list[object] = []
     for raw in raw_values:
         try:
             parsed = json.loads(raw)
@@ -62,7 +62,7 @@ def parse_values(raw_values: Sequence[str]) -> tuple[ParameterValue, ...]:
     return tuple(values)
 
 
-def run_sweep(parameter: str, values: Sequence[ParameterValue], profile: str, seed: int) -> tuple[SweepRow, ...]:
+def run_sweep(parameter: str, values: Sequence[object], profile: str, seed: int) -> tuple[SweepRow, ...]:
     """Run the benchmark once per value, holding everything else at default."""
     if parameter not in default_parameters():
         raise ValueError(f"unknown parameter: {parameter}")
@@ -91,7 +91,7 @@ def run_sweep(parameter: str, values: Sequence[ParameterValue], profile: str, se
     return tuple(rows)
 
 
-def _candidate(profile: str, parameter: str, value: ParameterValue) -> SynapticRetriever:
+def _candidate(profile: str, parameter: str, value: object) -> SynapticRetriever:
     overrides = {parameter: value}
     if profile == "smoke":
         return SynapticRetriever(_fixture_embedding, embedding_name="fixture", overrides=overrides)
