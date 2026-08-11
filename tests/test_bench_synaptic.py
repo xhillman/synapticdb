@@ -1,3 +1,5 @@
+import json
+import re
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -5,6 +7,7 @@ from uuid import UUID
 
 import pytest
 
+from bench.__main__ import _parse_overrides
 from bench.dataset import MemoryRecord, load_dataset
 from bench.protocol import run_benchmark
 from bench.retrievers import (
@@ -14,9 +17,49 @@ from bench.retrievers import (
     _fixture_embedding,
 )
 from synapticdb import InvalidArgumentError
-from synapticdb.learning import default_parameters
+from synapticdb.learning import ParameterValue, default_parameters
 
 ROOT = Path(__file__).parents[1]
+
+EXPECTED_REPORTED_PARAMS: dict[str, object] = {
+    "activation_blend_weight": 0.45,
+    "activation_decay": 0.2,
+    "activation_max_steps": 5,
+    "activation_min_energy": 0.05,
+    "activation_seeds": 5,
+    "candidate_depth": 40,
+    "co_retrieval": [0.05, 0.05],
+    "connect_weight": 0.5,
+    "decay_and_prune": [30, 0.02],
+    "feedback_rate": 0.15,
+    "hop_bonus": 0.15,
+    "maintenance_interval": 100,
+    "rrf_k": 60,
+    "seed_penalty": 0.2,
+    "semantic_seed": None,
+    "temporal_link": [600, 3, 0.2],
+    "top_k": 10,
+}
+
+VALID_PARAMETER_OVERRIDES: tuple[tuple[str, ParameterValue, object], ...] = (
+    ("top_k", 7, 7),
+    ("candidate_depth", 30, 30),
+    ("rrf_k", 50, 50),
+    ("activation_seeds", 4, 4),
+    ("activation_max_steps", 4, 4),
+    ("activation_decay", 0.3, 0.3),
+    ("activation_min_energy", 0.1, 0.1),
+    ("hop_bonus", 0.25, 0.25),
+    ("seed_penalty", 0.15, 0.15),
+    ("activation_blend_weight", 0.6, 0.6),
+    ("semantic_seed", (0.7, 2, 0.3), [0.7, 2, 0.3]),
+    ("temporal_link", (300, 2, 0.1), [300, 2, 0.1]),
+    ("co_retrieval", (0.1, 0.2), [0.1, 0.2]),
+    ("feedback_rate", 0.2, 0.2),
+    ("connect_weight", 0.6, 0.6),
+    ("decay_and_prune", (60, 0.03), [60, 0.03]),
+    ("maintenance_interval", 200, 200),
+)
 
 
 def schedule_embedding(text: str) -> Sequence[float]:
@@ -38,11 +81,7 @@ def test_synaptic_retriever_runs_the_smoke_benchmark_without_models() -> None:
     assert report.candidate_name == "synaptic"
     assert report.candidate_config["embedding"] == "fixture"
     recorded = report.candidate_config["params"]
-    assert recorded["activation_blend_weight"] == 0.45
-    assert recorded["semantic_seed"] is None
-    assert recorded["temporal_link"] == [600, 3, 0.2]
-    # The record names the whole budget, not a chosen subset.
-    assert set(recorded) == set(default_parameters())
+    assert recorded == EXPECTED_REPORTED_PARAMS
     assert len(report.runs[0].queries) == 10
 
 
@@ -82,27 +121,70 @@ def test_synaptic_retriever_applies_benchmark_semantic_parameters() -> None:
         retriever.close()
 
 
-def test_synaptic_retriever_applies_and_validates_parameter_overrides() -> None:
+@pytest.mark.parametrize(("key", "value", "recorded"), VALID_PARAMETER_OVERRIDES)
+def test_synaptic_retriever_accepts_and_records_each_parameter(
+    key: str,
+    value: ParameterValue,
+    recorded: object,
+) -> None:
     retriever = SynapticRetriever(
         _fixture_embedding,
         embedding_name="fixture",
-        overrides={"activation_blend_weight": 0.9},
+        overrides={key: value},
     )
     try:
-        assert retriever.config.params["activation_blend_weight"] == 0.9
-        assert retriever._memory._params["activation_blend_weight"] == 0.9
+        assert retriever.config.params[key] == recorded
+        assert set(retriever.config.params) == set(default_parameters())
     finally:
         retriever.close()
 
-    with pytest.raises(ValueError, match="unknown parameter"):
+
+def test_parameter_overrides_take_precedence_over_focused_benchmark_options() -> None:
+    retriever = SynapticRetriever(
+        _fixture_embedding,
+        embedding_name="fixture",
+        semantic_seed=(0.8, 1, 0.4),
+        temporal_link=(300, 2, 0.1),
+        overrides={
+            "semantic_seed": (0.7, 2, 0.3),
+            "temporal_link": (900, 4, 0.25),
+        },
+    )
+    try:
+        assert retriever.config.params["semantic_seed"] == [0.7, 2, 0.3]
+        assert retriever.config.params["temporal_link"] == [900, 4, 0.25]
+    finally:
+        retriever.close()
+
+
+def test_synaptic_retriever_rejects_unknown_and_invalid_parameters_during_construction() -> None:
+    with pytest.raises(ValueError, match=r"^unknown parameter: nope$"):
         SynapticRetriever(_fixture_embedding, embedding_name="fixture", overrides={"nope": 1})
-    # A malformed override must fail at construction, not midway through a run.
-    with pytest.raises(InvalidArgumentError):
+    with pytest.raises(InvalidArgumentError, match=r"^activation blend weight must be between 0 and 1$"):
         SynapticRetriever(
             _fixture_embedding,
             embedding_name="fixture",
             overrides={"activation_blend_weight": 5.0},
         )
+
+
+def test_parse_overrides_accepts_the_complete_parameter_budget() -> None:
+    entries = tuple(f"{key}={json.dumps(value)}" for key, value in default_parameters().items())
+    assert _parse_overrides(entries) == default_parameters()
+
+
+@pytest.mark.parametrize(
+    ("entries", "message"),
+    [
+        (("broken",), "--param expects KEY=JSON, got: broken"),
+        (("nope=1",), "unknown parameter: nope"),
+        (("top_k=10", "top_k=5"), "parameter repeated: top_k"),
+        (("top_k={broken",), "--param top_k needs a JSON value, got: {broken"),
+    ],
+)
+def test_parse_overrides_preserves_boundary_errors(entries: tuple[str, ...], message: str) -> None:
+    with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
+        _parse_overrides(entries)
 
 
 def test_advance_to_moves_the_instant_recall_records() -> None:

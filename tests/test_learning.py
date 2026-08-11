@@ -39,7 +39,25 @@ from synapticdb.learning import (
 
 def test_defaults_define_exact_parameter_budget_and_semantic_group() -> None:
     params = default_parameters()
-    assert len(params) == 17
+    assert params == {
+        "top_k": 10,
+        "candidate_depth": 40,
+        "rrf_k": 60,
+        "activation_seeds": 5,
+        "activation_max_steps": 5,
+        "activation_decay": 0.2,
+        "activation_min_energy": 0.05,
+        "hop_bonus": 0.15,
+        "seed_penalty": 0.2,
+        "activation_blend_weight": 0.45,
+        "semantic_seed": None,
+        "temporal_link": (600, 3, 0.2),
+        "co_retrieval": (0.05, 0.05),
+        "feedback_rate": 0.15,
+        "connect_weight": 0.5,
+        "decay_and_prune": (30, 0.02),
+        "maintenance_interval": 100,
+    }
     # Semantic seeding ships disabled (benchmark evidence); it is still one of
     # the 17 parameter groups, just None-valued.
     assert semantic_seed_config(params) is None
