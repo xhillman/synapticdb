@@ -88,7 +88,6 @@ class Synaptic:
         self._store = Store(db_path)
         self._confidence = ConfidenceCache()
         self._params: dict[str, ParameterValue] = default_parameters()
-        self._closed = False
         try:
             self._embedder = Embedder(
                 embedding_fn,
@@ -96,7 +95,6 @@ class Synaptic:
             )
         except Exception:
             self._store.close()
-            self._closed = True
             raise
 
     def remember(
@@ -515,10 +513,7 @@ class Synaptic:
 
     def close(self) -> None:
         """Release the database connection. Calling this twice is harmless."""
-        if self._closed:
-            return
         self._store.close()
-        self._closed = True
 
     def __enter__(self) -> Synaptic:
         """Enter a context that closes the database on exit."""
@@ -544,7 +539,7 @@ class Synaptic:
         return self._confidence.get(metrics)
 
     def _require_open(self) -> None:
-        if self._closed:
+        if self._store.closed:
             raise RuntimeError("Synaptic instance is closed")
 
 

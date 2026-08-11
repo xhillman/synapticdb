@@ -278,6 +278,11 @@ class Store:
         ).fetchone()
         return row is not None
 
+    @property
+    def closed(self) -> bool:
+        """Report whether the database connection is closed."""
+        return self._closed
+
     def close(self) -> None:
         if self._closed:
             return
