@@ -1,0 +1,967 @@
+{
+  "schema_version": 1,
+  "dataset_fingerprint": "6e95a1cbd637fd8f78e3762fd35d33a5bbc6b08da4e28a560cea9fa2402aeca9",
+  "baseline_name": "baseline",
+  "baseline_config": {
+    "keyword_top_k": 40,
+    "semantic_top_k": 40,
+    "fusion_k": 60,
+    "final_top_k": 10,
+    "bm25_k1": 1.2,
+    "bm25_b": 0.75,
+    "embedding_max_features": 4096,
+    "cross_encoder_model_name": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    "cross_encoder_revision": "c5ee24cb16019beea0893ab7796b1df96625c6b8",
+    "cross_encoder_weight": 0.6,
+    "keyword_weight": 0.2,
+    "semantic_weight": 0.15,
+    "fusion_weight": 0.05
+  },
+  "top_k": 10,
+  "environment": {
+    "commit": "188cc956750576356646ffcf8f9c4364ac0aa684",
+    "python": "3.11.4",
+    "platform": "macOS-26.0-arm64-arm-64bit",
+    "faiss-cpu": "1.14.3",
+    "numpy": "2.4.6",
+    "rank-bm25": "0.2.2",
+    "scikit-learn": "1.9.0",
+    "sentence-transformers": "3.4.1",
+    "tokenizers": "0.19.1",
+    "torch": "2.3.1",
+    "transformers": "4.41.2"
+  },
+  "rankings_sha256": "e0f8c4ac3edcc3b2d82cd73c888b2e0aafd35ca5effb1c8faa266cb40ab48fa7",
+  "rankings": [
+    {
+      "query_id": "Q-001",
+      "ranked_ids": [
+        "mem-0101",
+        "mem-0001",
+        "mem-0005",
+        "mem-0067",
+        "mem-0103",
+        "mem-0095",
+        "mem-0094",
+        "mem-0031",
+        "mem-0030",
+        "mem-0020"
+      ]
+    },
+    {
+      "query_id": "Q-002",
+      "ranked_ids": [
+        "mem-0102",
+        "mem-0115",
+        "mem-0212",
+        "mem-0204",
+        "mem-0272",
+        "mem-0236",
+        "mem-0208",
+        "mem-0332",
+        "mem-0296",
+        "mem-0264"
+      ]
+    },
+    {
+      "query_id": "Q-003",
+      "ranked_ids": [
+        "mem-0103",
+        "mem-0017",
+        "mem-0070",
+        "mem-0098",
+        "mem-0069",
+        "mem-0106",
+        "mem-0075",
+        "mem-0124",
+        "mem-0057",
+        "mem-0113"
+      ]
+    },
+    {
+      "query_id": "Q-004",
+      "ranked_ids": [
+        "mem-0104",
+        "mem-0072",
+        "mem-0075",
+        "mem-0062",
+        "mem-0071",
+        "mem-0049",
+        "mem-0057",
+        "mem-0102",
+        "mem-0016",
+        "mem-0081"
+      ]
+    },
+    {
+      "query_id": "Q-051",
+      "ranked_ids": [
+        "mem-0001",
+        "mem-0094",
+        "mem-0002",
+        "mem-0090",
+        "mem-0075",
+        "mem-0092",
+        "mem-0062",
+        "mem-0165",
+        "mem-0049",
+        "mem-0225"
+      ]
+    },
+    {
+      "query_id": "Q-005",
+      "ranked_ids": [
+        "mem-0105",
+        "mem-0038",
+        "mem-0193",
+        "mem-0253",
+        "mem-0313",
+        "mem-0433",
+        "mem-0163",
+        "mem-0373",
+        "mem-0031",
+        "mem-0493"
+      ]
+    },
+    {
+      "query_id": "Q-006",
+      "ranked_ids": [
+        "mem-0106",
+        "mem-0065",
+        "mem-0082",
+        "mem-0083",
+        "mem-0014",
+        "mem-0167",
+        "mem-0161",
+        "mem-0159",
+        "mem-0191",
+        "mem-0149"
+      ]
+    },
+    {
+      "query_id": "Q-007",
+      "ranked_ids": [
+        "mem-0107",
+        "mem-0024",
+        "mem-0038",
+        "mem-0042",
+        "mem-0119",
+        "mem-0044",
+        "mem-0023",
+        "mem-0015",
+        "mem-0109",
+        "mem-0043"
+      ]
+    },
+    {
+      "query_id": "Q-008",
+      "ranked_ids": [
+        "mem-0108",
+        "mem-0086",
+        "mem-0016",
+        "mem-0085",
+        "mem-0088",
+        "mem-0078",
+        "mem-0082",
+        "mem-0095",
+        "mem-0056",
+        "mem-0062"
+      ]
+    },
+    {
+      "query_id": "Q-052",
+      "ranked_ids": [
+        "mem-0116",
+        "mem-0010",
+        "mem-0112",
+        "mem-0032",
+        "mem-0107",
+        "mem-0102",
+        "mem-0104",
+        "mem-0119",
+        "mem-0110",
+        "mem-0014"
+      ]
+    },
+    {
+      "query_id": "Q-009",
+      "ranked_ids": [
+        "mem-0109",
+        "mem-0024",
+        "mem-0212",
+        "mem-0204",
+        "mem-0272",
+        "mem-0236",
+        "mem-0208",
+        "mem-0296",
+        "mem-0264",
+        "mem-0224"
+      ]
+    },
+    {
+      "query_id": "Q-010",
+      "ranked_ids": [
+        "mem-0110",
+        "mem-0096",
+        "mem-0106",
+        "mem-0017",
+        "mem-0075",
+        "mem-0124",
+        "mem-0057",
+        "mem-0113",
+        "mem-0102",
+        "mem-0081"
+      ]
+    },
+    {
+      "query_id": "Q-011",
+      "ranked_ids": [
+        "mem-0111",
+        "mem-0039",
+        "mem-0054",
+        "mem-0094",
+        "mem-0090",
+        "mem-0066",
+        "mem-0099",
+        "mem-0038",
+        "mem-0018",
+        "mem-0006"
+      ]
+    },
+    {
+      "query_id": "Q-012",
+      "ranked_ids": [
+        "mem-0112",
+        "mem-0031",
+        "mem-0030",
+        "mem-0005",
+        "mem-0020",
+        "mem-0012",
+        "mem-0038",
+        "mem-0022",
+        "mem-0008",
+        "mem-0027"
+      ]
+    },
+    {
+      "query_id": "Q-053",
+      "ranked_ids": [
+        "mem-0021",
+        "mem-0054",
+        "mem-0062",
+        "mem-0075",
+        "mem-0109",
+        "mem-0049",
+        "mem-0038",
+        "mem-0083",
+        "mem-0057",
+        "mem-0102"
+      ]
+    },
+    {
+      "query_id": "Q-013",
+      "ranked_ids": [
+        "mem-0113",
+        "mem-0014",
+        "mem-0039",
+        "mem-0038",
+        "mem-0079",
+        "mem-0167",
+        "mem-0161",
+        "mem-0159",
+        "mem-0191",
+        "mem-0149"
+      ]
+    },
+    {
+      "query_id": "Q-014",
+      "ranked_ids": [
+        "mem-0114",
+        "mem-0049",
+        "mem-0038",
+        "mem-0039",
+        "mem-0106",
+        "mem-0022",
+        "mem-0017",
+        "mem-0075",
+        "mem-0124",
+        "mem-0057"
+      ]
+    },
+    {
+      "query_id": "Q-015",
+      "ranked_ids": [
+        "mem-0115",
+        "mem-0102",
+        "mem-0087",
+        "mem-0014",
+        "mem-0023",
+        "mem-0043",
+        "mem-0099",
+        "mem-0051",
+        "mem-0010",
+        "mem-0063"
+      ]
+    },
+    {
+      "query_id": "Q-016",
+      "ranked_ids": [
+        "mem-0116",
+        "mem-0101",
+        "mem-0059",
+        "mem-0103",
+        "mem-0045",
+        "mem-0031",
+        "mem-0030",
+        "mem-0020",
+        "mem-0038",
+        "mem-0012"
+      ]
+    },
+    {
+      "query_id": "Q-054",
+      "ranked_ids": [
+        "mem-0029",
+        "mem-0112",
+        "mem-0061",
+        "mem-0039",
+        "mem-0102",
+        "mem-0110",
+        "mem-0059",
+        "mem-0107",
+        "mem-0104",
+        "mem-0119"
+      ]
+    },
+    {
+      "query_id": "Q-017",
+      "ranked_ids": [
+        "mem-0117",
+        "mem-0003",
+        "mem-0004",
+        "mem-0091",
+        "mem-0089",
+        "mem-0032",
+        "mem-0034",
+        "mem-0063",
+        "mem-0095",
+        "mem-0002"
+      ]
+    },
+    {
+      "query_id": "Q-018",
+      "ranked_ids": [
+        "mem-0118",
+        "mem-0098",
+        "mem-0097",
+        "mem-0058",
+        "mem-0072",
+        "mem-0023",
+        "mem-0048",
+        "mem-0033",
+        "mem-0036",
+        "mem-0075"
+      ]
+    },
+    {
+      "query_id": "Q-019",
+      "ranked_ids": [
+        "mem-0119",
+        "mem-0038",
+        "mem-0002",
+        "mem-0003",
+        "mem-0004",
+        "mem-0005",
+        "mem-0006",
+        "mem-0007",
+        "mem-0008",
+        "mem-0009"
+      ]
+    },
+    {
+      "query_id": "Q-020",
+      "ranked_ids": [
+        "mem-0120",
+        "mem-0016",
+        "mem-0060",
+        "mem-0093",
+        "mem-0024",
+        "mem-0115",
+        "mem-0059",
+        "mem-0137",
+        "mem-0131",
+        "mem-0152"
+      ]
+    },
+    {
+      "query_id": "Q-055",
+      "ranked_ids": [
+        "mem-0014",
+        "mem-0120",
+        "mem-0016",
+        "mem-0054",
+        "mem-0017",
+        "mem-0055",
+        "mem-0124",
+        "mem-0057",
+        "mem-0113",
+        "mem-0106"
+      ]
+    },
+    {
+      "query_id": "Q-021",
+      "ranked_ids": [
+        "mem-0121",
+        "mem-0054",
+        "mem-0045",
+        "mem-0056",
+        "mem-0021",
+        "mem-0106",
+        "mem-0017",
+        "mem-0075",
+        "mem-0124",
+        "mem-0057"
+      ]
+    },
+    {
+      "query_id": "Q-022",
+      "ranked_ids": [
+        "mem-0122",
+        "mem-0017",
+        "mem-0062",
+        "mem-0038",
+        "mem-0103",
+        "mem-0039",
+        "mem-0023",
+        "mem-0100",
+        "mem-0106",
+        "mem-0046"
+      ]
+    },
+    {
+      "query_id": "Q-023",
+      "ranked_ids": [
+        "mem-0123",
+        "mem-0039",
+        "mem-0038",
+        "mem-0167",
+        "mem-0161",
+        "mem-0159",
+        "mem-0149",
+        "mem-0191",
+        "mem-0257",
+        "mem-0189"
+      ]
+    },
+    {
+      "query_id": "Q-024",
+      "ranked_ids": [
+        "mem-0124",
+        "mem-0081",
+        "mem-0106",
+        "mem-0041",
+        "mem-0025",
+        "mem-0026",
+        "mem-0044",
+        "mem-0212",
+        "mem-0204",
+        "mem-0272"
+      ]
+    },
+    {
+      "query_id": "Q-056",
+      "ranked_ids": [
+        "mem-0107",
+        "mem-0094",
+        "mem-0070",
+        "mem-0038",
+        "mem-0033",
+        "mem-0034",
+        "mem-0078",
+        "mem-0082",
+        "mem-0095",
+        "mem-0056"
+      ]
+    },
+    {
+      "query_id": "Q-025",
+      "ranked_ids": [
+        "mem-0125",
+        "mem-0056",
+        "mem-0074",
+        "mem-0014",
+        "mem-0073",
+        "mem-0023",
+        "mem-0043",
+        "mem-0099",
+        "mem-0051",
+        "mem-0010"
+      ]
+    },
+    {
+      "query_id": "Q-026",
+      "ranked_ids": [
+        "mem-0001",
+        "mem-0002",
+        "mem-0104",
+        "mem-0033",
+        "mem-0094",
+        "mem-0074",
+        "mem-0073",
+        "mem-0022",
+        "mem-0069",
+        "mem-0097"
+      ]
+    },
+    {
+      "query_id": "Q-027",
+      "ranked_ids": [
+        "mem-0005",
+        "mem-0006",
+        "mem-0055",
+        "mem-0014",
+        "mem-0102",
+        "mem-0107",
+        "mem-0104",
+        "mem-0119",
+        "mem-0110",
+        "mem-0103"
+      ]
+    },
+    {
+      "query_id": "Q-028",
+      "ranked_ids": [
+        "mem-0009",
+        "mem-0116",
+        "mem-0124",
+        "mem-0095",
+        "mem-0111",
+        "mem-0066",
+        "mem-0061",
+        "mem-0085",
+        "mem-0089",
+        "mem-0083"
+      ]
+    },
+    {
+      "query_id": "Q-057",
+      "ranked_ids": [
+        "mem-0005",
+        "mem-0021",
+        "mem-0006",
+        "mem-0038",
+        "mem-0040",
+        "mem-0102",
+        "mem-0107",
+        "mem-0104",
+        "mem-0119",
+        "mem-0110"
+      ]
+    },
+    {
+      "query_id": "Q-029",
+      "ranked_ids": [
+        "mem-0013",
+        "mem-0014",
+        "mem-0120",
+        "mem-0078",
+        "mem-0082",
+        "mem-0095",
+        "mem-0056",
+        "mem-0062",
+        "mem-0070",
+        "mem-0039"
+      ]
+    },
+    {
+      "query_id": "Q-030",
+      "ranked_ids": [
+        "mem-0017",
+        "mem-0018",
+        "mem-0098",
+        "mem-0065",
+        "mem-0089",
+        "mem-0103",
+        "mem-0122",
+        "mem-0117",
+        "mem-0020",
+        "mem-0062"
+      ]
+    },
+    {
+      "query_id": "Q-031",
+      "ranked_ids": [
+        "mem-0021",
+        "mem-0022",
+        "mem-0014",
+        "mem-0109",
+        "mem-0107",
+        "mem-0054",
+        "mem-0102",
+        "mem-0025",
+        "mem-0119",
+        "mem-0110"
+      ]
+    },
+    {
+      "query_id": "Q-032",
+      "ranked_ids": [
+        "mem-0025",
+        "mem-0028",
+        "mem-0112",
+        "mem-0026",
+        "mem-0059",
+        "mem-0060",
+        "mem-0053",
+        "mem-0063",
+        "mem-0075",
+        "mem-0005"
+      ]
+    },
+    {
+      "query_id": "Q-058",
+      "ranked_ids": [
+        "mem-0121",
+        "mem-0072",
+        "mem-0022",
+        "mem-0014",
+        "mem-0099",
+        "mem-0031",
+        "mem-0077",
+        "mem-0083",
+        "mem-0167",
+        "mem-0161"
+      ]
+    },
+    {
+      "query_id": "Q-033",
+      "ranked_ids": [
+        "mem-0029",
+        "mem-0098",
+        "mem-0017",
+        "mem-0041",
+        "mem-0095",
+        "mem-0089",
+        "mem-0063",
+        "mem-0013",
+        "mem-0093",
+        "mem-0034"
+      ]
+    },
+    {
+      "query_id": "Q-034",
+      "ranked_ids": [
+        "mem-0033",
+        "mem-0034",
+        "mem-0036",
+        "mem-0118",
+        "mem-0070",
+        "mem-0097",
+        "mem-0035",
+        "mem-0096",
+        "mem-0038",
+        "mem-0084"
+      ]
+    },
+    {
+      "query_id": "Q-035",
+      "ranked_ids": [
+        "mem-0037",
+        "mem-0123",
+        "mem-0040",
+        "mem-0108",
+        "mem-0038",
+        "mem-0014",
+        "mem-0167",
+        "mem-0161",
+        "mem-0159",
+        "mem-0191"
+      ]
+    },
+    {
+      "query_id": "Q-036",
+      "ranked_ids": [
+        "mem-0041",
+        "mem-0044",
+        "mem-0124",
+        "mem-0043",
+        "mem-0025",
+        "mem-0111",
+        "mem-0026",
+        "mem-0066",
+        "mem-0061",
+        "mem-0085"
+      ]
+    },
+    {
+      "query_id": "Q-059",
+      "ranked_ids": [
+        "mem-0058",
+        "mem-0059",
+        "mem-0098",
+        "mem-0005",
+        "mem-0062",
+        "mem-0048",
+        "mem-0075",
+        "mem-0049",
+        "mem-0057",
+        "mem-0102"
+      ]
+    },
+    {
+      "query_id": "Q-037",
+      "ranked_ids": [
+        "mem-0045",
+        "mem-0119",
+        "mem-0009",
+        "mem-0047",
+        "mem-0109",
+        "mem-0077",
+        "mem-0013",
+        "mem-0212",
+        "mem-0204",
+        "mem-0272"
+      ]
+    },
+    {
+      "query_id": "Q-038",
+      "ranked_ids": [
+        "mem-0049",
+        "mem-0051",
+        "mem-0052",
+        "mem-0050",
+        "mem-0096",
+        "mem-0023",
+        "mem-0095",
+        "mem-0073",
+        "mem-0042",
+        "mem-0081"
+      ]
+    },
+    {
+      "query_id": "Q-039",
+      "ranked_ids": [
+        "mem-0053",
+        "mem-0085",
+        "mem-0045",
+        "mem-0093",
+        "mem-0017",
+        "mem-0029",
+        "mem-0003",
+        "mem-0121",
+        "mem-0108",
+        "mem-0056"
+      ]
+    },
+    {
+      "query_id": "Q-040",
+      "ranked_ids": [
+        "mem-0057",
+        "mem-0093",
+        "mem-0098",
+        "mem-0254",
+        "mem-0314",
+        "mem-0374",
+        "mem-0434",
+        "mem-0494",
+        "mem-0224",
+        "mem-0284"
+      ]
+    },
+    {
+      "query_id": "Q-060",
+      "ranked_ids": [
+        "mem-0062",
+        "mem-0022",
+        "mem-0031",
+        "mem-0023",
+        "mem-0007",
+        "mem-0063",
+        "mem-0074",
+        "mem-0099",
+        "mem-0014",
+        "mem-0038"
+      ]
+    },
+    {
+      "query_id": "Q-041",
+      "ranked_ids": [
+        "mem-0061",
+        "mem-0062",
+        "mem-0079",
+        "mem-0078",
+        "mem-0242",
+        "mem-0206",
+        "mem-0234",
+        "mem-0266",
+        "mem-0254",
+        "mem-0238"
+      ]
+    },
+    {
+      "query_id": "Q-042",
+      "ranked_ids": [
+        "mem-0065",
+        "mem-0068",
+        "mem-0067",
+        "mem-0066",
+        "mem-0090",
+        "mem-0027",
+        "mem-0023",
+        "mem-0010",
+        "mem-0099",
+        "mem-0014"
+      ]
+    },
+    {
+      "query_id": "Q-043",
+      "ranked_ids": [
+        "mem-0069",
+        "mem-0122",
+        "mem-0041",
+        "mem-0070",
+        "mem-0012",
+        "mem-0056",
+        "mem-0093",
+        "mem-0071",
+        "mem-0103",
+        "mem-0022"
+      ]
+    },
+    {
+      "query_id": "Q-044",
+      "ranked_ids": [
+        "mem-0073",
+        "mem-0074",
+        "mem-0007",
+        "mem-0005",
+        "mem-0115",
+        "mem-0031",
+        "mem-0092",
+        "mem-0064",
+        "mem-0026",
+        "mem-0021"
+      ]
+    },
+    {
+      "query_id": "Q-061",
+      "ranked_ids": [
+        "mem-0038",
+        "mem-0032",
+        "mem-0137",
+        "mem-0131",
+        "mem-0126",
+        "mem-0130",
+        "mem-0141",
+        "mem-0125",
+        "mem-0081",
+        "mem-0100"
+      ]
+    },
+    {
+      "query_id": "Q-045",
+      "ranked_ids": [
+        "mem-0078",
+        "mem-0077",
+        "mem-0039",
+        "mem-0038",
+        "mem-0022",
+        "mem-0069",
+        "mem-0097",
+        "mem-0009",
+        "mem-0112",
+        "mem-0025"
+      ]
+    },
+    {
+      "query_id": "Q-046",
+      "ranked_ids": [
+        "mem-0081",
+        "mem-0082",
+        "mem-0023",
+        "mem-0042",
+        "mem-0086",
+        "mem-0116",
+        "mem-0048",
+        "mem-0106",
+        "mem-0014",
+        "mem-0124"
+      ]
+    },
+    {
+      "query_id": "Q-047",
+      "ranked_ids": [
+        "mem-0085",
+        "mem-0108",
+        "mem-0088",
+        "mem-0086",
+        "mem-0110",
+        "mem-0212",
+        "mem-0204",
+        "mem-0272",
+        "mem-0236",
+        "mem-0208"
+      ]
+    },
+    {
+      "query_id": "Q-048",
+      "ranked_ids": [
+        "mem-0089",
+        "mem-0117",
+        "mem-0041",
+        "mem-0063",
+        "mem-0003",
+        "mem-0002",
+        "mem-0013",
+        "mem-0122",
+        "mem-0029",
+        "mem-0062"
+      ]
+    },
+    {
+      "query_id": "Q-062",
+      "ranked_ids": [
+        "mem-0085",
+        "mem-0108",
+        "mem-0004",
+        "mem-0066",
+        "mem-0111",
+        "mem-0089",
+        "mem-0088",
+        "mem-0014",
+        "mem-0061",
+        "mem-0009"
+      ]
+    },
+    {
+      "query_id": "Q-049",
+      "ranked_ids": [
+        "mem-0093",
+        "mem-0110",
+        "mem-0029",
+        "mem-0098",
+        "mem-0048",
+        "mem-0094",
+        "mem-0096",
+        "mem-0095",
+        "mem-0071",
+        "mem-0034"
+      ]
+    },
+    {
+      "query_id": "Q-050",
+      "ranked_ids": [
+        "mem-0097",
+        "mem-0118",
+        "mem-0109",
+        "mem-0033",
+        "mem-0098",
+        "mem-0036",
+        "mem-0112",
+        "mem-0069",
+        "mem-0025",
+        "mem-0023"
+      ]
+    }
+  ]
+}
