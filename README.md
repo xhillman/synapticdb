@@ -41,7 +41,7 @@ default either way.
 ```python
 from synapticdb import Synaptic
 
-with Synaptic(":memory:") as memories:
+with Synaptic("synaptic.db") as memories:
     memories.remember("Client X requires SOC2 for vendor deployments")
     result = memories.recall("deployment requirements for Client X")
     print(result.memories[0].memory.content)
