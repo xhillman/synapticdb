@@ -47,6 +47,15 @@ with Synaptic("synaptic.db") as memories:
     print(result.memories[0].memory.content)
 ```
 
+Every public result model keeps its typed Python fields and can also export
+JSON-ready values. `to_dict()` returns a dictionary that `json.dumps()` accepts,
+while `to_json()` returns a JSON string. UUIDs and timestamps become strings.
+
+```python
+payload = result.to_dict()
+json_text = result.to_json()
+```
+
 Pass `embedding_fn` to `Synaptic` to use a different local or hosted provider.
 The function takes a string and returns a numeric sequence with a stable
 dimension.
