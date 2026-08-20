@@ -48,7 +48,19 @@ def unit_float(value: float, label: str) -> float:
     return number
 
 
-class Memory(BaseModel):
+class _SerializableModel(BaseModel):
+    """Give each public model one explicit JSON export interface."""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a dictionary containing only JSON-compatible values."""
+        return self.model_dump(mode="json")
+
+    def to_json(self) -> str:
+        """Return the model encoded as JSON."""
+        return self.model_dump_json()
+
+
+class Memory(_SerializableModel):
     id: UUID
     content: str
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -64,7 +76,7 @@ class Memory(BaseModel):
         return value.astimezone(timezone.utc)
 
 
-class Recalled(BaseModel):
+class Recalled(_SerializableModel):
     memory: Memory
     # Blended ranking strength within this query. Comparable between results of
     # one recall, not between recalls: it is min-max normalized per query.
@@ -77,7 +89,7 @@ class Recalled(BaseModel):
     via: RecallSource
 
 
-class RecallResult(BaseModel):
+class RecallResult(_SerializableModel):
     query_id: UUID
     memories: list[Recalled]
     maturity: UnitFloat
@@ -88,7 +100,7 @@ class RecallResult(BaseModel):
         return [r for r in self.memories if r.via == "association"]
 
 
-class Stats(BaseModel):
+class Stats(_SerializableModel):
     memories: NonNegativeInt
     edges: NonNegativeInt
     edges_by_origin: dict[EdgeOrigin, NonNegativeInt]

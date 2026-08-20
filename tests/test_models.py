@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -76,6 +77,35 @@ def test_recall_result_associative_filters_by_via() -> None:
     result = RecallResult(query_id=uuid4(), memories=ranked, maturity=0.0, latency_ms=1.0)
     assert result.associative == [ranked[1]]
     assert result.memories == ranked
+
+
+def test_public_models_export_json_safe_values() -> None:
+    memory = make_memory()
+    recalled = Recalled(memory=memory, score=0.8, confidence=0.7, via="search")
+    result = RecallResult(query_id=uuid4(), memories=[recalled], maturity=0.5, latency_ms=1.0)
+    stats = Stats(memories=1, edges=0, edges_by_origin={}, maturity=0.5, db_path="agent.db")
+
+    for model in (memory, recalled, result, stats):
+        data = model.to_dict()
+        assert json.loads(json.dumps(data)) == data
+        assert json.loads(model.to_json()) == data
+
+
+def test_recall_result_export_converts_nested_uuid_and_datetime() -> None:
+    memory = make_memory()
+    result = RecallResult(
+        query_id=uuid4(),
+        memories=[Recalled(memory=memory, score=0.8, confidence=0.7, via="search")],
+        maturity=0.5,
+        latency_ms=1.0,
+    )
+
+    data = result.to_dict()
+    assert data["query_id"] == str(result.query_id)
+    exported_memory = data["memories"][0]["memory"]
+    assert exported_memory["id"] == str(memory.id)
+    assert exported_memory["created_at"].endswith("Z")
+    assert "associative" not in data
 
 
 @pytest.mark.parametrize(
