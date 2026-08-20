@@ -44,7 +44,7 @@ from synapticdb import SynapticDB
 with SynapticDB("synaptic.db") as memories:
     memories.store("Client X requires SOC2 for vendor deployments")
     result = memories.recall("deployment requirements for Client X")
-    print(result.memories[0].memory.content)
+    print(result.memories[0].content)
 ```
 
 Every public result model keeps its typed Python fields and can also export

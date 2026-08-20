@@ -181,7 +181,7 @@ class SynapticRetriever:
         else:
             result = self._memory._recall_at(text, top_k, None, self._now)
         try:
-            ranked = tuple(self._benchmark_ids[item.memory.id] for item in result.memories)
+            ranked = tuple(self._benchmark_ids[item.id] for item in result.memories)
         except KeyError as exc:
             raise RuntimeError("SynapticDB returned an unknown benchmark memory") from exc
         path_ids = self._path_benchmark_ids(result.query_id)

@@ -76,8 +76,7 @@ class Memory(_SerializableModel):
         return value.astimezone(timezone.utc)
 
 
-class Recalled(_SerializableModel):
-    memory: Memory
+class RecalledMemory(Memory):
     # Blended ranking strength within this query. Comparable between results of
     # one recall, not between recalls: it is min-max normalized per query.
     score: UnitFloat
@@ -91,13 +90,14 @@ class Recalled(_SerializableModel):
 
 class RecallResult(_SerializableModel):
     query_id: UUID
-    memories: list[Recalled]
+    memories: list[RecalledMemory]
     maturity: UnitFloat
     latency_ms: NonNegativeFloat
 
     @property
-    def associative(self) -> list[Recalled]:
-        return [r for r in self.memories if r.via == "association"]
+    def association_results(self) -> list[RecalledMemory]:
+        """Return memories retrieved only through an association."""
+        return [memory for memory in self.memories if memory.via == "association"]
 
 
 class Stats(_SerializableModel):

@@ -9,7 +9,7 @@ def test_import() -> None:
         "Memory",
         "NotFoundError",
         "RecallResult",
-        "Recalled",
+        "RecalledMemory",
         "Stats",
         "SynapticDB",
         "SynapticError",

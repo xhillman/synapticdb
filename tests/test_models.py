@@ -10,7 +10,7 @@ from synapticdb import (
     InvalidArgumentError,
     Memory,
     NotFoundError,
-    Recalled,
+    RecalledMemory,
     RecallResult,
     Stats,
     SynapticError,
@@ -23,18 +23,33 @@ def make_memory(content: str = "fact") -> Memory:
     return Memory(id=uuid4(), content=content, created_at=now, last_accessed_at=now)
 
 
-def make_recalled(via: RecallSource, score: float = 0.5, confidence: float = 0.5) -> Recalled:
-    return Recalled(memory=make_memory(), score=score, confidence=confidence, via=via)
+def make_recalled_memory(
+    via: RecallSource,
+    score: float = 0.5,
+    confidence: float = 0.5,
+) -> RecalledMemory:
+    memory = make_memory()
+    return RecalledMemory(
+        id=memory.id,
+        content=memory.content,
+        metadata=memory.metadata,
+        created_at=memory.created_at,
+        last_accessed_at=memory.last_accessed_at,
+        access_count=memory.access_count,
+        score=score,
+        confidence=confidence,
+        via=via,
+    )
 
 
-def test_recalled_separates_ranking_strength_from_confidence() -> None:
+def test_recalled_memory_separates_ranking_strength_from_confidence() -> None:
     # The two answer different questions, so they are allowed to disagree: an
     # association can rank well on graph evidence while matching the query text
     # poorly. Collapsing them into one number is what made `score` unusable.
-    recalled = make_recalled("association", score=0.9, confidence=0.1)
+    recalled = make_recalled_memory("association", score=0.9, confidence=0.1)
     assert (recalled.score, recalled.confidence) == (0.9, 0.1)
     with pytest.raises(pydantic.ValidationError):
-        make_recalled("search", confidence=1.5)
+        make_recalled_memory("search", confidence=1.5)
 
 
 def test_memory_defaults() -> None:
@@ -61,27 +76,29 @@ def test_memory_rejects_negative_access_count() -> None:
         Memory(id=uuid4(), content="fact", created_at=now, last_accessed_at=now, access_count=-1)
 
 
-def test_recalled_rejects_unknown_via() -> None:
+def test_recalled_memory_rejects_unknown_via() -> None:
+    values = make_recalled_memory("search").model_dump()
+    values["via"] = "telepathy"
     with pytest.raises(pydantic.ValidationError):
-        Recalled.model_validate({"memory": make_memory(), "score": 0.5, "via": "telepathy"})
+        RecalledMemory.model_validate(values)
 
 
 @pytest.mark.parametrize("score", [-0.01, 1.01, float("inf"), float("nan")])
-def test_recalled_rejects_score_outside_unit_range(score: float) -> None:
+def test_recalled_memory_rejects_score_outside_unit_range(score: float) -> None:
     with pytest.raises(pydantic.ValidationError):
-        make_recalled("search", score)
+        make_recalled_memory("search", score)
 
 
-def test_recall_result_associative_filters_by_via() -> None:
-    ranked = [make_recalled("search"), make_recalled("association"), make_recalled("both")]
+def test_recall_result_association_results_filter_by_via() -> None:
+    ranked = [make_recalled_memory("search"), make_recalled_memory("association"), make_recalled_memory("both")]
     result = RecallResult(query_id=uuid4(), memories=ranked, maturity=0.0, latency_ms=1.0)
-    assert result.associative == [ranked[1]]
+    assert result.association_results == [ranked[1]]
     assert result.memories == ranked
 
 
 def test_public_models_export_json_safe_values() -> None:
     memory = make_memory()
-    recalled = Recalled(memory=memory, score=0.8, confidence=0.7, via="search")
+    recalled = make_recalled_memory("search", score=0.8, confidence=0.7)
     result = RecallResult(query_id=uuid4(), memories=[recalled], maturity=0.5, latency_ms=1.0)
     stats = Stats(memories=1, edges=0, edges_by_origin={}, maturity=0.5, db_path="agent.db")
 
@@ -91,21 +108,22 @@ def test_public_models_export_json_safe_values() -> None:
         assert json.loads(model.to_json()) == data
 
 
-def test_recall_result_export_converts_nested_uuid_and_datetime() -> None:
-    memory = make_memory()
+def test_recall_result_export_flattens_memory_and_converts_special_values() -> None:
+    recalled = make_recalled_memory("search", score=0.8, confidence=0.7)
     result = RecallResult(
         query_id=uuid4(),
-        memories=[Recalled(memory=memory, score=0.8, confidence=0.7, via="search")],
+        memories=[recalled],
         maturity=0.5,
         latency_ms=1.0,
     )
 
     data = result.to_dict()
     assert data["query_id"] == str(result.query_id)
-    exported_memory = data["memories"][0]["memory"]
-    assert exported_memory["id"] == str(memory.id)
+    exported_memory = data["memories"][0]
+    assert exported_memory["id"] == str(recalled.id)
     assert exported_memory["created_at"].endswith("Z")
-    assert "associative" not in data
+    assert "memory" not in exported_memory
+    assert "association_results" not in data
 
 
 @pytest.mark.parametrize(

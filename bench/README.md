@@ -72,7 +72,7 @@ separation gate alone read a near-worthless +0.0029 — the weaker gate passed a
 system whose score carried no information, which is why the stricter one was
 added beside it rather than replacing it.
 
-The retriever supplies `Recalled.confidence` in `Retrieval.scores`, not
+The retriever supplies `RecalledMemory.confidence` in `Retrieval.scores`, not
 `score`. `score` is normalized within a query, so it cannot be compared across
 queries and cannot be calibrated by construction.
 

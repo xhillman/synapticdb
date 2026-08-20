@@ -33,10 +33,10 @@ def test_store_recall_and_dedupe_form_a_walking_skeleton() -> None:
         memory.store("gamma delta", {"source": "email"})
         result = memory.recall("alpha", top_k=2)
         assert duplicate == first
-        assert result.memories[0].memory.id == first.id
-        assert result.memories[0].memory.access_count == 1
+        assert result.memories[0].id == first.id
+        assert result.memories[0].access_count == 1
         assert all(recalled.via == "search" for recalled in result.memories)
-        assert result.associative == []
+        assert result.association_results == []
         assert result.maturity == 0.0
 
 
@@ -47,7 +47,7 @@ def test_recall_alpha_zero_scores_equal_normalized_rrf() -> None:
         result = memory.recall("alpha", top_k=2)
         expected_fusion = reciprocal_rank_fusion(((first.id, second.id), (first.id, second.id)))
         expected = min_max_normalize({hit.memory_id: hit.score for hit in expected_fusion})
-        assert [recalled.memory.id for recalled in result.memories] == [first.id, second.id]
+        assert [recalled.id for recalled in result.memories] == [first.id, second.id]
         assert [recalled.score for recalled in result.memories] == pytest.approx(
             [expected[first.id], expected[second.id]]
         )
@@ -139,7 +139,7 @@ def test_recall_blends_association_and_persists_activation_evidence() -> None:
         edge = memory._store.insert_edge(anchor.id, associated.id, 1.0, "explicit")
 
         result = memory.recall("alpha", top_k=50)
-        recalled = {item.memory.id: item for item in result.memories}
+        recalled = {item.id: item for item in result.memories}
         stored = memory._store.get_query(result.query_id)
 
         assert result.maturity > 0.0
@@ -350,7 +350,7 @@ def test_recall_persists_energies_for_activated_non_results() -> None:
         stored = memory._store.get_query(result.query_id)
         # top_k=1 returns only the anchor, but activation energized `hidden`,
         # and feedback on the path edge needs both endpoint energies.
-        assert [item.memory.id for item in result.memories] == [anchor.id]
+        assert [item.id for item in result.memories] == [anchor.id]
         assert hidden.id in stored.energies
         assert stored.energies[hidden.id] == pytest.approx(0.8)
 
@@ -362,7 +362,7 @@ def test_confidence_reports_similarity_not_rank_position() -> None:
         far = memory._store_at("gamma gamma gamma", None, started + timedelta(seconds=3600))
 
         result = memory._recall_at("alpha", 10, None, started + timedelta(seconds=7200))
-        by_id = {item.memory.id: item for item in result.memories}
+        by_id = {item.id: item for item in result.memories}
         # The query is pure alpha: the alpha memory matches it exactly, the
         # gamma one is orthogonal. That is what confidence should say, whatever
         # the ranking does.
@@ -383,8 +383,8 @@ def test_confidence_does_not_drift_with_graph_state() -> None:
             memory._recall_at("alpha", 10, None, started + timedelta(seconds=offset))
         last = memory._recall_at("alpha", 10, None, started + timedelta(seconds=1900))
 
-        before = {r.memory.id: r.confidence for r in first.memories}[anchor.id]
-        after = {r.memory.id: r.confidence for r in last.memories}[anchor.id]
+        before = {r.id: r.confidence for r in first.memories}[anchor.id]
+        after = {r.id: r.confidence for r in last.memories}[anchor.id]
         assert before == pytest.approx(after)
 
 
@@ -398,7 +398,7 @@ def test_confidence_is_clamped_to_the_unit_scale() -> None:
     with SynapticDB(":memory:", embedding_fn=signed) as memory:
         opposed = memory._store_at("gamma opposite", None, started)
         result = memory._recall_at("alpha", 10, None, started + timedelta(seconds=3600))
-        confidence = {r.memory.id: r.confidence for r in result.memories}[opposed.id]
+        confidence = {r.id: r.confidence for r in result.memories}[opposed.id]
         assert confidence == 0.0
 
 
@@ -426,7 +426,7 @@ def test_min_confidence_keeps_strong_matches_and_drops_weak_ones() -> None:
         memory._store_at("gamma gamma gamma", None, started + timedelta(seconds=3600))
 
         result = memory._recall_at("alpha", 10, None, started + timedelta(seconds=7200), 0.6)
-        assert [item.memory.id for item in result.memories] == [strong.id]
+        assert [item.id for item in result.memories] == [strong.id]
         assert all(item.confidence >= 0.6 for item in result.memories)
 
 
@@ -457,7 +457,7 @@ def test_where_filter_requires_present_equal_metadata() -> None:
         memory.store("alpha email", {"source": "email"})
         matching = memory.recall("alpha", where={"source": "call"})
         missing = memory.recall("alpha", where={"missing": None})
-        assert [item.memory.id for item in matching.memories] == [call.id]
+        assert [item.id for item in matching.memories] == [call.id]
         assert missing.memories == []
 
 

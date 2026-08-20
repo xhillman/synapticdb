@@ -101,8 +101,8 @@ result = mem.recall(
     min_confidence=0.0,                       # drop results below this; may return fewer, or none
 )                                             # -> RecallResult
 
-result.memories                               # list[Recalled], ranked
-result.associative                            # [r for r in memories if r.via == "association"]
+result.memories                               # list[RecalledMemory], ranked
+result.association_results                    # memories retrieved only through association
 result.query_id                               # UUID, feeds feedback()
 
 mem.feedback(result.query_id, positive=True)  # -> None; second call for same id raises
@@ -137,8 +137,7 @@ class Memory(BaseModel):
     last_accessed_at: datetime     # UTC
     access_count: int = 0
 
-class Recalled(BaseModel):
-    memory: Memory
+class RecalledMemory(Memory):
     score: float                   # blended ranking strength within this query, [0, 1]
     confidence: float              # cosine evidence this memory addresses the query, [0, 1]
     via: Literal["search", "association", "both"]
@@ -157,12 +156,12 @@ raise the threshold for direct matches only, lower it to admit associations.
 
 class RecallResult(BaseModel):
     query_id: UUID
-    memories: list[Recalled]
+    memories: list[RecalledMemory]
     maturity: float                # graph confidence at query time, [0, 1]
     latency_ms: float
 
     @property
-    def associative(self) -> list[Recalled]: ...
+    def association_results(self) -> list[RecalledMemory]: ...
 
 class Stats(BaseModel):
     memories: int
@@ -491,7 +490,7 @@ synapticdb/
 ├── docs/
 │   └── v0-prd.md             # this document
 ├── src/synapticdb/
-│   ├── __init__.py           # exports: SynapticDB, Memory, Recalled, RecallResult, Stats, errors
+│   ├── __init__.py           # exports: SynapticDB, Memory, RecalledMemory, RecallResult, Stats, errors
 │   ├── api.py                # SynapticDB class, orchestration        (~350 lines)
 │   ├── store.py              # SQLite + FTS + vector matrix          (~500 lines)
 │   ├── retrieval.py          # search, RRF, blend                    (~200 lines)

@@ -28,7 +28,7 @@ from synapticdb.learning import (
 from synapticdb.models import (
     InvalidArgumentError,
     Memory,
-    Recalled,
+    RecalledMemory,
     RecallResult,
     Stats,
     unit_float,
@@ -202,7 +202,7 @@ class SynapticDB:
     ) -> RecallResult:
         """Retrieve memories, optionally dropping those below a confidence floor.
 
-        `min_confidence` filters on `Recalled.confidence`, the absolute
+        `min_confidence` filters on `RecalledMemory.confidence`, the absolute
         similarity between query and memory, so one threshold behaves the same
         across queries. Raising it lets a recall return **fewer than `top_k`
         results, including none at all** — which is how a caller distinguishes
@@ -260,15 +260,7 @@ class SynapticDB:
         )
         if pair_seeds:
             self._confidence.invalidate()
-        recalled = [
-            Recalled(
-                memory=memory,
-                score=selected[memory.id].score,
-                confidence=confidences[memory.id],
-                via=selected[memory.id].via,
-            )
-            for memory in memories
-        ]
+        recalled = _recalled_memories(memories, selected, confidences)
         latency_ms = (time.perf_counter() - started) * 1000.0
         return RecallResult(
             query_id=query_row.id,
@@ -592,6 +584,28 @@ def _where_filter(where: Mapping[str, object] | None) -> dict[str, object]:
 
 def _metadata_matches(metadata: Mapping[str, object], filters: Mapping[str, object]) -> bool:
     return all(key in metadata and metadata[key] == value for key, value in filters.items())
+
+
+def _recalled_memories(
+    memories: Sequence[Memory],
+    selected: Mapping[UUID, BlendedHit],
+    confidences: Mapping[UUID, float],
+) -> list[RecalledMemory]:
+    """Add recall evidence to stored memories without nesting their fields."""
+    return [
+        RecalledMemory(
+            id=memory.id,
+            content=memory.content,
+            metadata=memory.metadata,
+            created_at=memory.created_at,
+            last_accessed_at=memory.last_accessed_at,
+            access_count=memory.access_count,
+            score=selected[memory.id].score,
+            confidence=confidences[memory.id],
+            via=selected[memory.id].via,
+        )
+        for memory in memories
+    ]
 
 
 def _recall_energies(
