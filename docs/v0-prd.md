@@ -103,13 +103,13 @@ result = mem.recall(
 
 result.memories                               # list[RecalledMemory], ranked
 result.association_results                    # memories retrieved only through association
-result.query_id                               # UUID, feeds feedback()
+result.query_id                               # UUID; feedback() also accepts its string form
 
-mem.feedback(result.query_id, positive=True)  # -> None; second call for same id raises
+mem.feedback(result.query_id, positive=True)  # UUID | str; second call for same id raises
 
 # --- graph ---------------------------------------------------------------
-mem.connect(a_id, b_id)                       # explicit edge, weight 0.5
-mem.forget(memory_id)                         # delete memory + its edges
+mem.connect(a_id, b_id)                       # UUID | str; explicit edge, weight 0.5
+mem.forget(memory_id)                         # UUID | str; delete memory + its edges
 mem.stats()                                   # -> Stats (see §3.2)
 
 mem.close()                                   # also a context manager

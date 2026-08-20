@@ -354,28 +354,28 @@ class SynapticDB:
         identifiers = tuple(selected_ids)
         return identifiers, {memory_id: hits_by_id[memory_id] for memory_id in identifiers}
 
-    def feedback(self, query_id: UUID, *, positive: bool = True) -> None:
+    def feedback(self, query_id: UUID | str, *, positive: bool = True) -> None:
         """Apply explicit feedback for one recall (PRD §6.6).
 
         Positive feedback strengthens — and may create — the edges among the
         results and along the association paths that produced them. Negative
-        feedback weakens the same edges without creating any.
+        feedback weakens the same edges without creating any. `query_id`
+        accepts either a UUID object or its string representation.
         """
         self._feedback_at(query_id, positive, datetime.now(timezone.utc))
 
-    def _feedback_at(self, query_id: UUID, positive: bool, now: datetime) -> None:
+    def _feedback_at(self, query_id: UUID | str, positive: bool, now: datetime) -> None:
         """Apply feedback against a single read time, as recall does."""
         self._require_open()
-        if not isinstance(query_id, UUID):
-            raise InvalidArgumentError("query_id must be a UUID")
+        identifier = _identifier(query_id, "query_id")
         if not isinstance(positive, bool):
             raise InvalidArgumentError("positive must be a boolean")
-        query = self._store.get_query(query_id)
+        query = self._store.get_query(identifier)
         pairs = self._feedback_pairs(query, now)
         rate = self._policy.feedback_rate
         seeds, updates = self._feedback_updates(pairs, query.energies, rate, positive, now)
         self._store.apply_feedback(
-            query_id,
+            identifier,
             1 if positive else -1,
             pair_seeds=seeds,
             weight_updates=updates,
@@ -459,22 +459,23 @@ class SynapticDB:
             updates.append((edge.id, negative_feedback_weight(edge.effective_weight, first, second, rate)))
         return tuple(seeds), tuple(updates)
 
-    def connect(self, first_id: UUID, second_id: UUID) -> None:
+    def connect(self, first_id: UUID | str, second_id: UUID | str) -> None:
         """Assert an explicit link between two memories (PRD §3, §9 group 15).
 
         The only user-created edge origin. Idempotent, and never weakens a link
-        the graph already rates more highly.
+        the graph already rates more highly. Each id accepts either a UUID
+        object or its string representation.
         """
         self._connect_at(first_id, second_id, datetime.now(timezone.utc))
 
-    def _connect_at(self, first_id: UUID, second_id: UUID, now: datetime) -> None:
+    def _connect_at(self, first_id: UUID | str, second_id: UUID | str, now: datetime) -> None:
         """Assert an explicit link against a single read time."""
         self._require_open()
-        if not isinstance(first_id, UUID) or not isinstance(second_id, UUID):
-            raise InvalidArgumentError("connect requires two UUID memory_ids")
+        first = _identifier(first_id, "first_id")
+        second = _identifier(second_id, "second_id")
         self._store.assert_edge(
-            first_id,
-            second_id,
+            first,
+            second,
             self._policy.connect_weight,
             "explicit",
             asserted_at=now,
@@ -482,17 +483,17 @@ class SynapticDB:
         )
         self._confidence.invalidate()
 
-    def forget(self, memory_id: UUID) -> None:
+    def forget(self, memory_id: UUID | str) -> None:
         """Delete one memory and every edge touching it.
 
         Raises NotFoundError for an unknown id. Edge removal is a foreign-key
         cascade, so the graph cannot keep an edge pointing at a memory that no
-        longer exists.
+        longer exists. `memory_id` accepts either a UUID object or its string
+        representation.
         """
         self._require_open()
-        if not isinstance(memory_id, UUID):
-            raise InvalidArgumentError("memory_id must be a UUID")
-        self._store.forget_memory(memory_id)
+        identifier = _identifier(memory_id, "memory_id")
+        self._store.forget_memory(identifier)
         self._confidence.invalidate()
 
     def stats(self) -> Stats:
@@ -552,6 +553,18 @@ def _bounded_text(value: str, label: str) -> str:
     if len(value) > _MAX_TEXT_CHARS:
         raise InvalidArgumentError(f"{label} exceeds {_MAX_TEXT_CHARS} characters")
     return value
+
+
+def _identifier(value: UUID | str, label: str) -> UUID:
+    """Return one public identifier as a UUID."""
+    if isinstance(value, UUID):
+        return value
+    if not isinstance(value, str):
+        raise InvalidArgumentError(f"{label} must be a UUID or UUID string")
+    try:
+        return UUID(value)
+    except ValueError as error:
+        raise InvalidArgumentError(f"{label} must be a UUID or UUID string") from error
 
 
 def _top_k(value: int) -> int:

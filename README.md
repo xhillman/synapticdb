@@ -56,6 +56,10 @@ payload = result.to_dict()
 json_text = result.to_json()
 ```
 
+Model identifiers are UUID objects in Python and strings in JSON. `feedback()`,
+`connect()`, and `forget()` accept either form, so serialized identifiers can
+return to the API without manual conversion.
+
 Pass `embedding_fn` to `SynapticDB` to use a different local or hosted provider.
 The function takes a string and returns a numeric sequence with a stable
 dimension.

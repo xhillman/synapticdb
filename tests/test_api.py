@@ -1,5 +1,5 @@
 import inspect
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import cast
 from uuid import UUID, uuid4
@@ -316,11 +316,11 @@ def test_feedback_edge_creation_is_bounded_by_the_linked_result_count() -> None:
         assert memory._store.get_edge_between(ids[0], ids[9]) is None
 
 
-def test_repeated_feedback_raises_and_unknown_query_raises() -> None:
+def test_feedback_accepts_string_id_then_rejects_repeat_and_unknown() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         _, _, query_id = _two_memory_recall(memory, started)
-        memory.feedback(query_id, positive=True)
+        memory.feedback(str(query_id), positive=True)
         with pytest.raises(InvalidArgumentError, match="already recorded"):
             memory.feedback(query_id, positive=True)
         with pytest.raises(NotFoundError):
@@ -524,21 +524,29 @@ def test_connect_is_idempotent() -> None:
         assert memory.stats().edges == 1
 
 
-def test_connect_rejects_non_uuid_arguments() -> None:
+def test_identifier_methods_reject_invalid_values() -> None:
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         first = memory.store("alpha one")
-        with pytest.raises(InvalidArgumentError, match="two UUID"):
-            memory.connect(first.id, cast(UUID, "not-a-uuid"))
+        invalid_number = cast(UUID | str, 7)
+        calls: tuple[tuple[Callable[[], None], str], ...] = (
+            (lambda: memory.feedback("not-a-uuid"), "query_id"),
+            (lambda: memory.connect(invalid_number, first.id), "first_id"),
+            (lambda: memory.connect(first.id, "not-a-uuid"), "second_id"),
+            (lambda: memory.forget(invalid_number), "memory_id"),
+        )
+        for call, label in calls:
+            with pytest.raises(InvalidArgumentError, match=rf"^{label} must be a UUID or UUID string$"):
+                call()
 
 
-def test_forget_removes_a_connected_memory_and_its_edge() -> None:
+def test_string_ids_connect_then_forget_a_memory_and_its_edge() -> None:
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         first = memory.store("alpha one")
         second = memory.store("gamma two")
-        memory.connect(first.id, second.id)
+        memory.connect(str(first.id), str(second.id))
         assert memory.stats().edges == 1
 
-        memory.forget(second.id)
+        memory.forget(str(second.id))
         after = memory.stats()
         assert after.memories == 1
         assert after.edges == 0
