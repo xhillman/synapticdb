@@ -36,14 +36,14 @@ class ConfidenceCache:
     """Cache confidence until a successful graph-affecting write invalidates it.
 
     This cache has no key: correctness depends on every graph write calling
-    invalidate(). Every one now does: remember(), forget(), connect(),
+    invalidate(). Every one now does: store(), forget(), connect(),
     feedback(), and co-retrieval reinforcement inside recall. A new graph write
     must call it too, or maturity goes silently stale.
 
     Edge decay (PRD §6.4) also moves confidence, and time passing fires no
     invalidate(). A long-lived instance that never writes therefore reports the
     maturity it computed at its first recall. Accepted for v0: instances are
-    short-lived, and every remember() drops the cached value anyway.
+    short-lived, and every store() drops the cached value anyway.
     """
 
     def __init__(self) -> None:

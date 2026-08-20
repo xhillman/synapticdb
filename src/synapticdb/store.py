@@ -99,7 +99,7 @@ class MemoryInsert:
     inserted: bool
     # Durable count of real inserts, so the caller can decide when to run
     # maintenance. Zero when this call deduplicated and stored nothing.
-    remember_count: int = 0
+    store_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,9 +371,9 @@ class Store:
             row = self._required_memory_row(identifier)
             for seed in seeds:
                 self._write_edge(identifier, seed, timestamp, half_life_days)
-            remember_count = self._bump_remember_count()
+            store_count = self._bump_store_count()
         self._append_vector_cache(identifier, vector)
-        return MemoryInsert(_memory_from_row(row), True, remember_count)
+        return MemoryInsert(_memory_from_row(row), True, store_count)
 
     def get_memory(self, memory_id: UUID) -> Memory:
         self._require_open()
@@ -1136,24 +1136,24 @@ class Store:
         by_id = {row["id"]: row for row in rows}
         return tuple(by_id[edge_id] for edge_id in edge_ids)
 
-    def _bump_remember_count(self) -> int:
+    def _bump_store_count(self) -> int:
         """Advance the durable insert counter inside the caller's transaction.
 
-        Durable rather than in-process: an agent that remembers a handful of
-        things per invocation would otherwise never reach the maintenance
+        Durable rather than in-process: an agent that stores a handful of
+        memories per invocation would otherwise never reach the maintenance
         interval, and its graph would grow without bound.
         """
         self._connection.execute(
             """
-            INSERT INTO meta (key, value) VALUES ('remember_count', '1')
+            INSERT INTO meta (key, value) VALUES ('store_count', '1')
             ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)
             """
         )
         row = self._connection.execute(
-            "SELECT value FROM meta WHERE key = 'remember_count'",
+            "SELECT value FROM meta WHERE key = 'store_count'",
         ).fetchone()
         if row is None:
-            raise RuntimeError("remember counter vanished during its own update")
+            raise RuntimeError("store counter vanished during its own update")
         return int(row["value"])
 
     def _ensure_embedding_dimension(self, dimension: int) -> None:

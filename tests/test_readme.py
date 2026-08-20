@@ -58,7 +58,7 @@ def test_readme_confidence_example_runs_verbatim() -> None:
         return (float(lowered.count("client")), float(lowered.count("invoice")))
 
     with SynapticDB(":memory:", embedding_fn=embedding) as memories:
-        memories.remember("Client X requires SOC2 for vendor deployments")
+        memories.store("Client X requires SOC2 for vendor deployments")
         namespace: dict[str, Any] = {"memories": memories}
         exec(compile(snippet, "README.md", "exec"), namespace)
         relevant = namespace["relevant"]

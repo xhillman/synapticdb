@@ -42,7 +42,7 @@ default either way.
 from synapticdb import SynapticDB
 
 with SynapticDB("synaptic.db") as memories:
-    memories.remember("Client X requires SOC2 for vendor deployments")
+    memories.store("Client X requires SOC2 for vendor deployments")
     result = memories.recall("deployment requirements for Client X")
     print(result.memories[0].memory.content)
 ```

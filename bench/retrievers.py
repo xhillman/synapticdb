@@ -167,7 +167,7 @@ class SynapticRetriever:
             raise ValueError("synaptic memory IDs must be unique")
         for record in memories:
             created_at = INGEST_EPOCH + timedelta(seconds=record.ingest_offset_seconds)
-            memory = self._memory._remember_at(record.content, record.metadata, created_at)
+            memory = self._memory._store_at(record.content, record.metadata, created_at)
             self._benchmark_ids[memory.id] = record.benchmark_id
         if len(self._benchmark_ids) != len(memories):
             raise RuntimeError("benchmark corpus contains duplicate memory content")

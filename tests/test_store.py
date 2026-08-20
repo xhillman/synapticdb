@@ -18,7 +18,7 @@ def store(tmp_path: Path) -> Iterator[Store]:
         yield opened
 
 
-def remember(
+def store_memory(
     store: Store,
     content: str,
     embedding: tuple[float, ...] = (1.0, 0.0),
@@ -48,7 +48,7 @@ def test_schema_initializes_with_wal_fts_and_version(tmp_path: Path) -> None:
 
 def test_store_supports_memory_database_and_context_manager() -> None:
     with Store(":memory:") as store:
-        memory_id = remember(store, "in memory")
+        memory_id = store_memory(store, "in memory")
         assert store.get_memory(memory_id).content == "in memory"
     with pytest.raises(RuntimeError, match="closed"):
         store.get_memory(memory_id)
@@ -79,8 +79,8 @@ def test_content_hash_dedupe_returns_existing_memory(store: Store) -> None:
 
 
 def test_memory_and_initial_edges_commit_atomically(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     result = store.insert_memory_with_edges(
         "linked memory",
         {},
@@ -98,7 +98,7 @@ def test_memory_and_initial_edges_commit_atomically(store: Store) -> None:
 
 
 def test_deduplicated_memory_does_not_create_new_edges(store: Store) -> None:
-    first_id = remember(store, "first")
+    first_id = store_memory(store, "first")
     original = store.insert_memory("duplicate", {}, (1.0, 0.0))
     result = store.insert_memory_with_edges(
         " duplicate ",
@@ -112,7 +112,7 @@ def test_deduplicated_memory_does_not_create_new_edges(store: Store) -> None:
 
 
 def test_unknown_edge_seed_rolls_back_memory_insert(store: Store) -> None:
-    remember(store, "existing")
+    store_memory(store, "existing")
     before = store.graph_summary()
     with pytest.raises(NotFoundError):
         store.insert_memory_with_edges(
@@ -136,9 +136,9 @@ def test_insert_rejects_invalid_embeddings(store: Store, embedding: tuple[float,
 
 
 def test_insert_rejects_embedding_dimension_mismatch(store: Store) -> None:
-    remember(store, "first", (1.0, 0.0))
+    store_memory(store, "first", (1.0, 0.0))
     with pytest.raises(EmbeddingError, match="does not match"):
-        remember(store, "second", (1.0, 0.0, 0.0))
+        store_memory(store, "second", (1.0, 0.0, 0.0))
 
 
 def test_insert_rejects_invalid_content_and_metadata(store: Store) -> None:
@@ -151,8 +151,8 @@ def test_insert_rejects_invalid_content_and_metadata(store: Store) -> None:
 
 
 def test_get_memories_preserves_order_and_rejects_unknown_ids(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     assert [memory.id for memory in store.get_memories((second_id, first_id))] == [second_id, first_id]
     with pytest.raises(NotFoundError):
         store.get_memories((first_id, uuid4()))
@@ -162,10 +162,10 @@ def test_recent_memory_ids_applies_timestamp_window_order_and_limit(tmp_path: Pa
     db_path = tmp_path / "recent.db"
     started = datetime(2026, 7, 23, 12, 0, tzinfo=timezone.utc)
     with Store(db_path) as first:
-        boundary_id = remember(first, "boundary", created_at=started)
-        second_id = remember(first, "second", created_at=started + timedelta(seconds=100))
-        third_id = remember(first, "third", created_at=started + timedelta(seconds=200))
-        remember(first, "future", created_at=started + timedelta(seconds=601))
+        boundary_id = store_memory(first, "boundary", created_at=started)
+        second_id = store_memory(first, "second", created_at=started + timedelta(seconds=100))
+        third_id = store_memory(first, "third", created_at=started + timedelta(seconds=200))
+        store_memory(first, "future", created_at=started + timedelta(seconds=601))
     with Store(db_path) as reopened:
         recent = reopened.recent_memory_ids(
             before=started + timedelta(seconds=600),
@@ -184,8 +184,8 @@ def test_recent_memory_ids_applies_timestamp_window_order_and_limit(tmp_path: Pa
 
 
 def test_bump_access_updates_all_rows_atomically(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     accessed_at = datetime(2026, 7, 23, 13, 0, tzinfo=timezone.utc)
     store.bump_access((first_id, second_id), accessed_at=accessed_at)
     first, second = store.get_memories((first_id, second_id))
@@ -197,8 +197,8 @@ def test_bump_access_updates_all_rows_atomically(store: Store) -> None:
 
 
 def test_insert_edge_is_canonical_and_conflict_returns_existing(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     created_at = datetime(2026, 7, 23, 14, 0, tzinfo=timezone.utc)
     edge = store.insert_edge(second_id, first_id, 0.25, "semantic", created_at=created_at)
     existing = store.insert_edge(first_id, second_id, 0.5, "explicit")
@@ -214,15 +214,15 @@ def test_insert_edge_is_canonical_and_conflict_returns_existing(store: Store) ->
 
 
 def test_get_edge_between_normalizes_pair_order(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     assert store.get_edge_between(first_id, second_id) is None
     edge = store.insert_edge(first_id, second_id, 0.25, "semantic")
     assert store.get_edge_between(second_id, first_id) == edge
 
 
 def test_edge_operations_validate_endpoints(store: Store) -> None:
-    memory_id = remember(store, "first")
+    memory_id = store_memory(store, "first")
     with pytest.raises(InvalidArgumentError, match="different"):
         store.insert_edge(memory_id, memory_id, 0.5, "explicit")
     with pytest.raises(NotFoundError):
@@ -232,9 +232,9 @@ def test_edge_operations_validate_endpoints(store: Store) -> None:
 
 
 def test_list_edges_and_forget_cascade(store: Store) -> None:
-    center_id = remember(store, "center")
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    center_id = store_memory(store, "center")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     first_edge = store.insert_edge(center_id, first_id, 0.25, "semantic")
     second_edge = store.insert_edge(center_id, second_id, 0.2, "temporal")
     assert {edge.id for edge in store.list_edges_for_node(center_id)} == {first_edge.id, second_edge.id}
@@ -248,8 +248,8 @@ def test_list_edges_and_forget_cascade(store: Store) -> None:
 
 
 def test_list_edges_on_a_dense_hub_returns_strongest_edges(store: Store) -> None:
-    center_id = remember(store, "center")
-    neighbor_ids = tuple(remember(store, f"neighbor {index}") for index in range(401))
+    center_id = store_memory(store, "center")
+    neighbor_ids = tuple(store_memory(store, f"neighbor {index}") for index in range(401))
     strong_edge = store.insert_edge(center_id, neighbor_ids[0], 0.9, "explicit")
     for neighbor_id in neighbor_ids[1:]:
         store.insert_edge(center_id, neighbor_id, 0.25, "semantic")
@@ -261,8 +261,8 @@ def test_list_edges_on_a_dense_hub_returns_strongest_edges(store: Store) -> None
 
 
 def test_assert_edge_creates_an_explicit_link(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     edge = store.assert_edge(first_id, second_id, 0.5, "explicit")
     assert edge.weight == pytest.approx(0.5)
     assert edge.origin == "explicit"
@@ -270,8 +270,8 @@ def test_assert_edge_creates_an_explicit_link(store: Store) -> None:
 
 
 def test_assert_edge_raises_a_weaker_edge_and_claims_it(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     created_at = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     store.insert_edge(first_id, second_id, 0.2, "temporal", created_at=created_at)
 
@@ -284,8 +284,8 @@ def test_assert_edge_raises_a_weaker_edge_and_claims_it(store: Store) -> None:
 
 
 def test_assert_edge_keeps_a_stronger_existing_weight(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     created_at = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     store.insert_edge(first_id, second_id, 0.8, "co_retrieval", created_at=created_at)
 
@@ -295,8 +295,8 @@ def test_assert_edge_keeps_a_stronger_existing_weight(store: Store) -> None:
 
 
 def test_assert_edge_compares_against_the_decayed_weight(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     long_ago = datetime(2026, 1, 1, tzinfo=timezone.utc)
     much_later = long_ago + timedelta(days=300)
     store.insert_edge(first_id, second_id, 0.9, "explicit", created_at=long_ago)
@@ -309,7 +309,7 @@ def test_assert_edge_compares_against_the_decayed_weight(store: Store) -> None:
 
 
 def test_assert_edge_validates_its_endpoints(store: Store) -> None:
-    memory_id = remember(store, "first")
+    memory_id = store_memory(store, "first")
     with pytest.raises(InvalidArgumentError, match="two different"):
         store.assert_edge(memory_id, memory_id, 0.5, "explicit")
     with pytest.raises(NotFoundError):
@@ -317,8 +317,8 @@ def test_assert_edge_validates_its_endpoints(store: Store) -> None:
 
 
 def test_fresh_edge_reads_its_stored_weight_undecayed(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     edge = store.insert_edge(first_id, second_id, 0.4, "semantic", created_at=created_at)
     assert edge.effective_weight == pytest.approx(edge.weight)
@@ -329,9 +329,9 @@ def test_fresh_edge_reads_its_stored_weight_undecayed(store: Store) -> None:
 
 
 def test_hub_ranking_prefers_a_fresh_edge_over_a_stale_heavier_one(store: Store) -> None:
-    center_id = remember(store, "center")
-    stale_id = remember(store, "stale neighbor")
-    fresh_id = remember(store, "fresh neighbor")
+    center_id = store_memory(store, "center")
+    stale_id = store_memory(store, "stale neighbor")
+    fresh_id = store_memory(store, "fresh neighbor")
     long_ago = datetime(2026, 1, 1, tzinfo=timezone.utc)
     read_time = long_ago + timedelta(days=300)
     store.insert_edge(center_id, stale_id, 0.9, "explicit", created_at=long_ago)
@@ -346,7 +346,7 @@ def test_hub_ranking_prefers_a_fresh_edge_over_a_stale_heavier_one(store: Store)
 
 
 def test_duplicate_seeds_reinforce_the_same_edge_once(store: Store) -> None:
-    neighbor_id = remember(store, "neighbor")
+    neighbor_id = store_memory(store, "neighbor")
     created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     result = store.insert_memory_with_edges(
         "new memory",
@@ -366,8 +366,8 @@ def test_duplicate_seeds_reinforce_the_same_edge_once(store: Store) -> None:
 
 
 def test_reinforcement_decays_the_stored_weight_before_raising_it(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     later = created_at + timedelta(days=30)
     edge = store.insert_edge(first_id, second_id, 0.4, "semantic", created_at=created_at)
@@ -388,8 +388,8 @@ def test_reinforcement_decays_the_stored_weight_before_raising_it(store: Store) 
 
 
 def test_graph_summary_average_weight_falls_as_edges_age(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     store.insert_edge(first_id, second_id, 0.6, "explicit", created_at=created_at)
 
@@ -408,9 +408,9 @@ def test_native_and_callback_decay_agree(store: Store) -> None:
     that they were written from the same formula.
     """
     created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    previous = remember(store, "anchor")
+    previous = store_memory(store, "anchor")
     for index, weight in enumerate((0.02, 0.25, 0.5, 0.75, 1.0)):
-        current = remember(store, f"memory {index}")
+        current = store_memory(store, f"memory {index}")
         store.insert_edge(previous, current, weight, "explicit", created_at=created_at)
         previous = current
 
@@ -431,8 +431,8 @@ def test_native_and_callback_decay_agree(store: Store) -> None:
 
 
 def test_graph_summary_falls_back_when_native_math_is_unavailable(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     store.insert_edge(first_id, second_id, 0.6, "explicit", created_at=created_at)
     aged = created_at + timedelta(days=30)
@@ -445,12 +445,12 @@ def test_graph_summary_falls_back_when_native_math_is_unavailable(store: Store) 
 
 
 def test_graph_summary_cache_refreshes_after_any_write(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     store.insert_edge(first_id, second_id, 0.6, "explicit")
     assert store.graph_summary().edge_count == 1
 
-    third_id = remember(store, "third")
+    third_id = store_memory(store, "third")
     store.insert_edge(second_id, third_id, 0.4, "explicit")
     assert store.graph_summary().edge_count == 2
 
@@ -461,8 +461,8 @@ def test_graph_summary_cache_refreshes_after_any_write(store: Store) -> None:
 
 def test_graph_summary_cache_does_not_serve_an_explicit_read_time(store: Store) -> None:
     """A simulated clock must always see the graph at the instant it names."""
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     store.insert_edge(first_id, second_id, 0.6, "explicit", created_at=created_at)
 
@@ -474,8 +474,8 @@ def test_graph_summary_cache_does_not_serve_an_explicit_read_time(store: Store) 
 
 
 def test_graph_summary_cache_refreshes_when_the_half_life_changes(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     created_at = datetime.now(timezone.utc) - timedelta(days=30)
     store.insert_edge(first_id, second_id, 0.8, "explicit", created_at=created_at)
 
@@ -491,8 +491,8 @@ def test_graph_summary_rejects_an_unreadable_timestamp(store: Store) -> None:
     The callback raises on the NULL that julianday() returns. AVG skips NULL
     instead, so the native path needs its own check to fail the same way.
     """
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     store.insert_edge(first_id, second_id, 0.6, "explicit")
     store._connection.execute("UPDATE edges SET last_reinforced_at = 'not a timestamp'")
 
@@ -501,8 +501,8 @@ def test_graph_summary_rejects_an_unreadable_timestamp(store: Store) -> None:
 
 
 def test_bulk_edge_update_rolls_back_on_unknown_edge(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     edge = store.insert_edge(first_id, second_id, 0.25, "semantic")
     with pytest.raises(NotFoundError):
         store.bulk_update_edge_weights(((edge.id, 0.8), ("missing", 0.6)))
@@ -515,9 +515,9 @@ def test_bulk_edge_update_rolls_back_on_unknown_edge(store: Store) -> None:
 
 
 def test_graph_summary_reports_counts_averages_and_origins(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
-    third_id = remember(store, "third")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
+    third_id = store_memory(store, "third")
     semantic = store.insert_edge(first_id, second_id, 0.25, "semantic")
     store.insert_edge(second_id, third_id, 0.75, "explicit")
     store.bulk_update_edge_weights(((semantic.id, 0.5),))
@@ -535,8 +535,8 @@ def test_graph_summary_reports_counts_averages_and_origins(store: Store) -> None
 
 
 def test_query_roundtrip_and_feedback(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     edge = store.insert_edge(first_id, second_id, 0.25, "semantic")
     created_at = datetime(2026, 7, 23, 15, 0, tzinfo=timezone.utc)
     query = store.save_query(
@@ -558,8 +558,8 @@ def test_query_roundtrip_and_feedback(store: Store) -> None:
 
 
 def test_record_recall_persists_query_and_bumps_access_atomically(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     recorded_at = datetime(2026, 7, 23, 15, 30, tzinfo=timezone.utc)
     query, memories = store.record_recall(
         "related facts",
@@ -575,7 +575,7 @@ def test_record_recall_persists_query_and_bumps_access_atomically(store: Store) 
 
 
 def test_record_recall_rolls_back_when_a_memory_is_unknown(store: Store) -> None:
-    memory_id = remember(store, "first")
+    memory_id = store_memory(store, "first")
     unknown_id = uuid4()
     query_id = uuid4()
     with pytest.raises(NotFoundError):
@@ -608,8 +608,8 @@ def _co_retrieval_recall(
 
 
 def test_recall_creates_then_reinforces_one_co_retrieval_edge(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     recorded_at = datetime(2026, 7, 23, 15, 30, tzinfo=timezone.utc)
 
     _co_retrieval_recall(store, first_id, second_id, recorded_at)
@@ -629,8 +629,8 @@ def test_recall_creates_then_reinforces_one_co_retrieval_edge(store: Store) -> N
 
 
 def test_co_retrieval_reinforcement_decays_the_edge_first(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     created_at = datetime(2026, 7, 23, 15, 30, tzinfo=timezone.utc)
     later = created_at + timedelta(days=30)
 
@@ -645,7 +645,7 @@ def test_co_retrieval_reinforcement_decays_the_edge_first(store: Store) -> None:
 
 
 def test_recall_rolls_back_the_query_when_a_learned_pair_is_unknown(store: Store) -> None:
-    memory_id = remember(store, "first")
+    memory_id = store_memory(store, "first")
     unknown_id = uuid4()
     query_id = uuid4()
     with pytest.raises(NotFoundError):
@@ -664,8 +664,8 @@ def test_recall_rolls_back_the_query_when_a_learned_pair_is_unknown(store: Store
 
 
 def test_recall_rejects_repeated_and_oversized_pair_seeds(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     reversed_duplicate = (
         PairSeed(first_id, second_id, 0.05, "co_retrieval", 0.05),
         PairSeed(second_id, first_id, 0.05, "co_retrieval", 0.05),
@@ -678,8 +678,8 @@ def test_recall_rejects_repeated_and_oversized_pair_seeds(store: Store) -> None:
 
 
 def test_apply_feedback_writes_edges_and_the_flag_together(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     query = store.save_query("q", (first_id, second_id), {first_id: 1.0, second_id: 1.0}, ())
 
     updated = store.apply_feedback(
@@ -694,7 +694,7 @@ def test_apply_feedback_writes_edges_and_the_flag_together(store: Store) -> None
 
 
 def test_apply_feedback_rolls_back_the_flag_when_an_edge_write_fails(store: Store) -> None:
-    memory_id = remember(store, "first")
+    memory_id = store_memory(store, "first")
     query = store.save_query("q", (memory_id,), {memory_id: 1.0}, ())
     with pytest.raises(NotFoundError):
         store.apply_feedback(
@@ -709,8 +709,8 @@ def test_apply_feedback_rolls_back_the_flag_when_an_edge_write_fails(store: Stor
 
 
 def test_repeated_feedback_raises_without_applying_a_second_update(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     query = store.save_query("q", (first_id, second_id), {first_id: 1.0, second_id: 1.0}, ())
     seeds = (PairSeed(first_id, second_id, 0.05, "co_retrieval", 0.15),)
     store.apply_feedback(query.id, 1, pair_seeds=seeds)
@@ -732,8 +732,8 @@ def test_apply_feedback_rejects_an_unknown_query(store: Store) -> None:
 
 
 def test_edges_by_ids_skips_rows_that_no_longer_exist(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     edge = store.insert_edge(first_id, second_id, 0.3, "semantic")
     assert [found.id for found in store.edges_by_ids((edge.id, "missing"))] == [edge.id]
     store.forget_memory(first_id)
@@ -741,8 +741,8 @@ def test_edges_by_ids_skips_rows_that_no_longer_exist(store: Store) -> None:
 
 
 def test_pruning_retires_an_edge_decay_has_worn_out(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     long_ago = datetime(2026, 1, 1, tzinfo=timezone.utc)
     # Stored weight 0.2 is far above the 0.02 floor; after 300 days its
     # effective weight is ~0.0002. Comparing the stored value would keep it.
@@ -754,8 +754,8 @@ def test_pruning_retires_an_edge_decay_has_worn_out(store: Store) -> None:
 
 
 def test_pruning_keeps_an_edge_exactly_at_the_threshold(store: Store) -> None:
-    first_id = remember(store, "first")
-    second_id = remember(store, "second")
+    first_id = store_memory(store, "first")
+    second_id = store_memory(store, "second")
     created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     store.insert_edge(first_id, second_id, 0.02, "co_retrieval", created_at=created_at)
 
@@ -765,10 +765,10 @@ def test_pruning_keeps_an_edge_exactly_at_the_threshold(store: Store) -> None:
 
 
 def test_pruning_is_bounded_and_leaves_the_rest_for_the_next_pass(store: Store) -> None:
-    center_id = remember(store, "center")
+    center_id = store_memory(store, "center")
     created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     for index in range(5):
-        other_id = remember(store, f"other {index}")
+        other_id = store_memory(store, f"other {index}")
         store.insert_edge(center_id, other_id, 0.01, "co_retrieval", created_at=created_at)
 
     assert store.prune_weak_edges(0.02, now=created_at, limit=2) == 2
@@ -778,23 +778,23 @@ def test_pruning_is_bounded_and_leaves_the_rest_for_the_next_pass(store: Store) 
     assert store.graph_summary().edge_count == 0
 
 
-def test_remember_counter_is_durable_and_ignores_deduplication(tmp_path: Path) -> None:
+def test_store_counter_is_durable_and_ignores_deduplication(tmp_path: Path) -> None:
     db_path = tmp_path / "counter.db"
     with Store(db_path) as first:
-        assert first.insert_memory_with_edges("one", {}, (1.0, 0.0), ()).remember_count == 1
-        assert first.insert_memory_with_edges("two", {}, (1.0, 0.0), ()).remember_count == 2
+        assert first.insert_memory_with_edges("one", {}, (1.0, 0.0), ()).store_count == 1
+        assert first.insert_memory_with_edges("two", {}, (1.0, 0.0), ()).store_count == 2
         duplicate = first.insert_memory_with_edges("one", {}, (1.0, 0.0), ())
         # A deduplicated call stores nothing, so it grew no graph to maintain.
         assert duplicate.inserted is False
-        assert duplicate.remember_count == 0
+        assert duplicate.store_count == 0
     with Store(db_path) as reopened:
-        # Durable: an agent that remembers a few things per run still reaches
+        # Durable: an agent that stores a few things per run still reaches
         # the maintenance interval eventually.
-        assert reopened.insert_memory_with_edges("three", {}, (1.0, 0.0), ()).remember_count == 3
+        assert reopened.insert_memory_with_edges("three", {}, (1.0, 0.0), ()).store_count == 3
 
 
 def test_query_validation_rejects_incomplete_data(store: Store) -> None:
-    memory_id = remember(store, "first")
+    memory_id = store_memory(store, "first")
     with pytest.raises(InvalidArgumentError, match="missing energy"):
         store.save_query("query", (memory_id,), {}, ())
     with pytest.raises(NotFoundError):

@@ -15,7 +15,7 @@ four memory types and four metadata sources each appear exactly 125 times.
 Adjacent related memories are 120 seconds apart; unrelated boundaries are 900
 seconds apart. This lets the future adapter exercise the real 600-second
 temporal-learning window without pretending the archived source timestamps are
-the times at which `remember()` was called.
+the times at which `store()` was called.
 
 `smoke/` is a deterministic 50-memory subset with five direct and five
 associative queries. It validates the harness in CI without FAISS or model

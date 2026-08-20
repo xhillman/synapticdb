@@ -5,7 +5,7 @@ the wheel. It ingests memories in frozen narrative order, replays disjoint
 warm-up events, and evaluates direct and associative holdout queries.
 
 Dataset IDs such as `mem-0001` are evaluator-owned `benchmark_id` values, not
-product IDs. A SynapticDB adapter maps them to the UUIDs returned by `remember()`.
+product IDs. A SynapticDB adapter maps them to the UUIDs returned by `store()`.
 The ingestion schedule supplies controlled time offsets for temporal learning;
 archived source timestamps are not passed as memory metadata.
 
@@ -156,7 +156,7 @@ quietly taught the answer reports success it has not earned, so the constraint
 lives in code that fails rather than prose that persuades.
 
 **Nor can it measure maintenance and pruning (PRD §6.5).** Maintenance triggers
-on `remember`, and the harness performs every remember during ingest, before
+on `store()`, and the harness performs every store call during ingest, before
 anything has aged — so a pass fires five times on the full profile and deletes
 nothing. Measuring it needs writes *interleaved* with simulated time, not just
 queries replayed after it. Until then, maintenance must be a no-op here, which

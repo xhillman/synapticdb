@@ -26,11 +26,11 @@ def configured_memory(**overrides: object) -> SynapticDB:
     return SynapticDB._with_policy(":memory:", embedding, runtime_policy(overrides))
 
 
-def test_remember_recall_and_dedupe_form_a_walking_skeleton() -> None:
+def test_store_recall_and_dedupe_form_a_walking_skeleton() -> None:
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        first = memory.remember("alpha beta", {"source": "call"})
-        duplicate = memory.remember(" alpha beta ", {"source": "other"})
-        memory.remember("gamma delta", {"source": "email"})
+        first = memory.store("alpha beta", {"source": "call"})
+        duplicate = memory.store(" alpha beta ", {"source": "other"})
+        memory.store("gamma delta", {"source": "email"})
         result = memory.recall("alpha", top_k=2)
         assert duplicate == first
         assert result.memories[0].memory.id == first.id
@@ -42,8 +42,8 @@ def test_remember_recall_and_dedupe_form_a_walking_skeleton() -> None:
 
 def test_recall_alpha_zero_scores_equal_normalized_rrf() -> None:
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        first = memory.remember("alpha alpha alpha alpha")
-        second = memory.remember("alpha delta delta delta")
+        first = memory.store("alpha alpha alpha alpha")
+        second = memory.store("alpha delta delta delta")
         result = memory.recall("alpha", top_k=2)
         expected_fusion = reciprocal_rank_fusion(((first.id, second.id), (first.id, second.id)))
         expected = min_max_normalize({hit.memory_id: hit.score for hit in expected_fusion})
@@ -56,25 +56,25 @@ def test_recall_alpha_zero_scores_equal_normalized_rrf() -> None:
 def test_semantic_seeding_is_disabled_by_default() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        first = memory._remember_at("alpha first", None, started)
+        first = memory._store_at("alpha first", None, started)
         # Far outside the temporal window, so any edge would be semantic.
-        second = memory._remember_at("alpha second", None, started + timedelta(seconds=3600))
+        second = memory._store_at("alpha second", None, started + timedelta(seconds=3600))
         assert memory._store.get_edge_between(first.id, second.id) is None
         assert memory.stats().edges_by_origin["semantic"] == 0
 
 
-def test_remember_seeds_top_three_semantic_edges() -> None:
+def test_store_seeds_top_three_semantic_edges() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with configured_memory(semantic_seed=SEMANTIC_SEED_CALIBRATION) as memory:
         existing = tuple(
-            memory._remember_at(
+            memory._store_at(
                 f"alpha memory {index}",
                 None,
                 started + timedelta(seconds=601 * index),
             )
             for index in range(4)
         )
-        newest = memory._remember_at("alpha newest", None, started + timedelta(seconds=601 * 4))
+        newest = memory._store_at("alpha newest", None, started + timedelta(seconds=601 * 4))
         edges = memory._store.list_edges_for_node(newest.id)
         assert len(edges) == 3
         assert {edge.a if edge.b == newest.id else edge.b for edge in edges} == {item.id for item in existing[:3]}
@@ -84,19 +84,19 @@ def test_remember_seeds_top_three_semantic_edges() -> None:
 def test_private_semantic_parameters_support_benchmark_calibration() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with configured_memory(semantic_seed=(0.8, 1, 0.4)) as memory:
-        first = memory._remember_at("alpha first", None, started)
-        second = memory._remember_at("alpha second", None, started + timedelta(seconds=601))
+        first = memory._store_at("alpha first", None, started)
+        second = memory._store_at("alpha second", None, started + timedelta(seconds=601))
         edge = memory._store.get_edge_between(first.id, second.id)
         assert edge is not None
         assert edge.weight == 0.4
 
 
-def test_remember_links_temporal_boundary_and_skips_outside_window() -> None:
+def test_store_links_temporal_boundary_and_skips_outside_window() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        first = memory._remember_at("alpha first", None, started)
-        boundary = memory._remember_at("gamma boundary", None, started + timedelta(seconds=600))
-        outside = memory._remember_at("alpha outside", None, started + timedelta(seconds=1201))
+        first = memory._store_at("alpha first", None, started)
+        boundary = memory._store_at("gamma boundary", None, started + timedelta(seconds=600))
+        outside = memory._store_at("alpha outside", None, started + timedelta(seconds=1201))
         edge = memory._store.get_edge_between(first.id, boundary.id)
         assert edge is not None
         assert edge.origin == "temporal"
@@ -107,8 +107,8 @@ def test_remember_links_temporal_boundary_and_skips_outside_window() -> None:
 def test_semantic_and_temporal_overlap_reinforces_one_edge() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with configured_memory(semantic_seed=SEMANTIC_SEED_CALIBRATION) as memory:
-        first = memory._remember_at("alpha first", None, started)
-        second = memory._remember_at("alpha second", None, started + timedelta(seconds=1))
+        first = memory._store_at("alpha first", None, started)
+        second = memory._store_at("alpha second", None, started + timedelta(seconds=1))
         edge = memory._store.get_edge_between(first.id, second.id)
         assert edge is not None
         assert edge.origin == "semantic"
@@ -119,8 +119,8 @@ def test_semantic_and_temporal_overlap_reinforces_one_edge() -> None:
 def test_recall_persists_unit_energies_for_fusion_only_results() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        first = memory._remember_at("alpha beta", None, started)
-        second = memory._remember_at(
+        first = memory._store_at("alpha beta", None, started)
+        second = memory._store_at(
             "alpha delta delta delta",
             None,
             started + timedelta(seconds=601),
@@ -132,10 +132,10 @@ def test_recall_persists_unit_energies_for_fusion_only_results() -> None:
 
 def test_recall_blends_association_and_persists_activation_evidence() -> None:
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        anchor = memory.remember("alpha anchor")
+        anchor = memory.store("alpha anchor")
         for index in range(40):
-            memory.remember(f"gamma filler {index}")
-        associated = memory.remember("delta hidden")
+            memory.store(f"gamma filler {index}")
+        associated = memory.store("delta hidden")
         edge = memory._store.insert_edge(anchor.id, associated.id, 1.0, "explicit")
 
         result = memory.recall("alpha", top_k=50)
@@ -152,8 +152,8 @@ def test_recall_blends_association_and_persists_activation_evidence() -> None:
 def test_recall_links_its_top_results_and_reinforces_on_repeat() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        first = memory._remember_at("alpha one", None, started)
-        second = memory._remember_at("alpha two", None, started + timedelta(seconds=601))
+        first = memory._store_at("alpha one", None, started)
+        second = memory._store_at("alpha two", None, started + timedelta(seconds=601))
 
         memory._recall_at("alpha", 10, None, started + timedelta(seconds=1200))
         edge = memory._store.get_edge_between(first.id, second.id)
@@ -178,7 +178,7 @@ def test_recall_links_its_top_results_and_reinforces_on_repeat() -> None:
 def test_recall_below_two_results_learns_nothing() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        memory._remember_at("alpha only", None, started)
+        memory._store_at("alpha only", None, started)
         memory._recall_at("alpha", 10, None, started + timedelta(seconds=601))
         assert memory.stats().edges == 0
 
@@ -186,8 +186,8 @@ def test_recall_below_two_results_learns_nothing() -> None:
 def test_a_new_co_retrieval_edge_carries_no_energy_until_reinforced() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        anchor = memory._remember_at("alpha anchor", None, started)
-        far = memory._remember_at("delta far", None, started + timedelta(seconds=601))
+        anchor = memory._store_at("alpha anchor", None, started)
+        far = memory._store_at("delta far", None, started + timedelta(seconds=601))
         # A single 0.05 edge: activation would carry 1.0 * 0.05 * 0.8 = 0.04,
         # under the 0.05 minimum energy, so the pair cannot yet spread.
         edge = memory._store.insert_edge(anchor.id, far.id, 0.05, "co_retrieval")
@@ -205,10 +205,10 @@ def test_a_new_co_retrieval_edge_carries_no_energy_until_reinforced() -> None:
 def test_activation_energy_falls_as_the_connecting_edge_ages() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        anchor = memory._remember_at("alpha anchor", None, started)
+        anchor = memory._store_at("alpha anchor", None, started)
         for index in range(40):
-            memory._remember_at(f"gamma filler {index}", None, started)
-        associated = memory._remember_at("delta hidden", None, started)
+            memory._store_at(f"gamma filler {index}", None, started)
+        associated = memory._store_at("delta hidden", None, started)
         memory._store.insert_edge(anchor.id, associated.id, 1.0, "explicit", created_at=started)
 
         fresh = memory._recall_at("alpha", 50, None, started)
@@ -225,8 +225,8 @@ def test_activation_energy_falls_as_the_connecting_edge_ages() -> None:
 def test_recall_reads_every_edge_at_one_instant() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        first = memory._remember_at("alpha one", None, started)
-        second = memory._remember_at("alpha two", None, started)
+        first = memory._store_at("alpha one", None, started)
+        second = memory._store_at("alpha two", None, started)
         result = memory._recall_at("alpha", 2, None, started)
         stored = memory._store.get_query(result.query_id)
         assert stored.created_at == started
@@ -234,8 +234,8 @@ def test_recall_reads_every_edge_at_one_instant() -> None:
 
 
 def _two_memory_recall(memory: SynapticDB, started: datetime) -> tuple[UUID, UUID, UUID]:
-    first = memory._remember_at("alpha one", None, started)
-    second = memory._remember_at("alpha two", None, started + timedelta(seconds=601))
+    first = memory._store_at("alpha one", None, started)
+    second = memory._store_at("alpha two", None, started + timedelta(seconds=601))
     result = memory._recall_at("alpha", 10, None, started + timedelta(seconds=1200))
     return first.id, second.id, result.query_id
 
@@ -274,8 +274,8 @@ def test_negative_feedback_weakens_without_creating_edges() -> None:
 def test_positive_feedback_creates_a_missing_result_pair_edge() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        first = memory._remember_at("alpha one", None, started)
-        second = memory._remember_at("alpha two", None, started + timedelta(seconds=601))
+        first = memory._store_at("alpha one", None, started)
+        second = memory._store_at("alpha two", None, started + timedelta(seconds=601))
         # A saved query without the co-retrieval pass, so no edge exists yet.
         query = memory._store.save_query(
             "alpha",
@@ -298,7 +298,7 @@ def test_feedback_edge_creation_is_bounded_by_the_linked_result_count() -> None:
         # Ten results, each far enough apart that no temporal edge forms, so
         # every edge afterwards is one feedback created.
         ids = [
-            memory._remember_at(f"alpha memory {index}", None, started + timedelta(seconds=3600 * index)).id
+            memory._store_at(f"alpha memory {index}", None, started + timedelta(seconds=3600 * index)).id
             for index in range(10)
         ]
         query = memory._store.save_query("alpha", tuple(ids), dict.fromkeys(ids, 1.0), ())
@@ -342,8 +342,8 @@ def test_feedback_skips_pairs_whose_memory_was_forgotten() -> None:
 def test_recall_persists_energies_for_activated_non_results() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        anchor = memory._remember_at("alpha anchor", None, started)
-        hidden = memory._remember_at("delta hidden", None, started + timedelta(seconds=601))
+        anchor = memory._store_at("alpha anchor", None, started)
+        hidden = memory._store_at("delta hidden", None, started + timedelta(seconds=601))
         memory._store.insert_edge(anchor.id, hidden.id, 1.0, "explicit")
 
         result = memory._recall_at("alpha", 1, None, started + timedelta(seconds=1200))
@@ -358,8 +358,8 @@ def test_recall_persists_energies_for_activated_non_results() -> None:
 def test_confidence_reports_similarity_not_rank_position() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        close = memory._remember_at("alpha alpha alpha", None, started)
-        far = memory._remember_at("gamma gamma gamma", None, started + timedelta(seconds=3600))
+        close = memory._store_at("alpha alpha alpha", None, started)
+        far = memory._store_at("gamma gamma gamma", None, started + timedelta(seconds=3600))
 
         result = memory._recall_at("alpha", 10, None, started + timedelta(seconds=7200))
         by_id = {item.memory.id: item for item in result.memories}
@@ -373,8 +373,8 @@ def test_confidence_reports_similarity_not_rank_position() -> None:
 def test_confidence_does_not_drift_with_graph_state() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        anchor = memory._remember_at("alpha one", None, started)
-        memory._remember_at("alpha two", None, started + timedelta(seconds=601))
+        anchor = memory._store_at("alpha one", None, started)
+        memory._store_at("alpha two", None, started + timedelta(seconds=601))
 
         first = memory._recall_at("alpha", 10, None, started + timedelta(seconds=1200))
         # Several recalls later the graph has grown and maturity has moved. The
@@ -396,7 +396,7 @@ def test_confidence_is_clamped_to_the_unit_scale() -> None:
 
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with SynapticDB(":memory:", embedding_fn=signed) as memory:
-        opposed = memory._remember_at("gamma opposite", None, started)
+        opposed = memory._store_at("gamma opposite", None, started)
         result = memory._recall_at("alpha", 10, None, started + timedelta(seconds=3600))
         confidence = {r.memory.id: r.confidence for r in result.memories}[opposed.id]
         assert confidence == 0.0
@@ -405,8 +405,8 @@ def test_confidence_is_clamped_to_the_unit_scale() -> None:
 def test_min_confidence_can_return_nothing_at_all() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        memory._remember_at("gamma one", None, started)
-        memory._remember_at("gamma two", None, started + timedelta(seconds=3600))
+        memory._store_at("gamma one", None, started)
+        memory._store_at("gamma two", None, started + timedelta(seconds=3600))
 
         # "alpha" is orthogonal to everything stored. Without a floor the
         # caller gets two confident-looking results for a question the corpus
@@ -422,8 +422,8 @@ def test_min_confidence_can_return_nothing_at_all() -> None:
 def test_min_confidence_keeps_strong_matches_and_drops_weak_ones() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        strong = memory._remember_at("alpha alpha alpha", None, started)
-        memory._remember_at("gamma gamma gamma", None, started + timedelta(seconds=3600))
+        strong = memory._store_at("alpha alpha alpha", None, started)
+        memory._store_at("gamma gamma gamma", None, started + timedelta(seconds=3600))
 
         result = memory._recall_at("alpha", 10, None, started + timedelta(seconds=7200), 0.6)
         assert [item.memory.id for item in result.memories] == [strong.id]
@@ -433,8 +433,8 @@ def test_min_confidence_keeps_strong_matches_and_drops_weak_ones() -> None:
 def test_filtered_results_are_not_learned_from() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        first = memory._remember_at("alpha one", None, started)
-        second = memory._remember_at("gamma two", None, started + timedelta(seconds=3600))
+        first = memory._store_at("alpha one", None, started)
+        second = memory._store_at("gamma two", None, started + timedelta(seconds=3600))
 
         # Both would be returned unfiltered, and co-retrieval would link them.
         # A result the caller rejected as too weak must not also be reinforced
@@ -446,15 +446,15 @@ def test_filtered_results_are_not_learned_from() -> None:
 @pytest.mark.parametrize("value", [-0.1, 1.5, float("nan"), True, "high"])
 def test_min_confidence_rejects_invalid_values(value: object) -> None:
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        memory.remember("alpha")
+        memory.store("alpha")
         with pytest.raises(InvalidArgumentError, match="min_confidence"):
             memory.recall("alpha", min_confidence=cast(float, value))
 
 
 def test_where_filter_requires_present_equal_metadata() -> None:
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        call = memory.remember("alpha call", {"source": "call", "optional": None})
-        memory.remember("alpha email", {"source": "email"})
+        call = memory.store("alpha call", {"source": "call", "optional": None})
+        memory.store("alpha email", {"source": "email"})
         matching = memory.recall("alpha", where={"source": "call"})
         missing = memory.recall("alpha", where={"missing": None})
         assert [item.memory.id for item in matching.memories] == [call.id]
@@ -472,9 +472,9 @@ def test_empty_database_recall_is_persisted_and_returns_no_results() -> None:
 def test_connect_creates_the_only_user_authored_edge() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        first = memory._remember_at("alpha one", None, started)
+        first = memory._store_at("alpha one", None, started)
         # Outside the 600 s temporal window, so nothing links these two yet.
-        second = memory._remember_at("gamma two", None, started + timedelta(seconds=3600))
+        second = memory._store_at("gamma two", None, started + timedelta(seconds=3600))
         assert memory._store.get_edge_between(first.id, second.id) is None
 
         memory._connect_at(first.id, second.id, started + timedelta(seconds=3600))
@@ -489,9 +489,9 @@ def test_connect_creates_the_only_user_authored_edge() -> None:
 def test_connect_claims_an_edge_the_graph_inferred() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        first = memory._remember_at("alpha one", None, started)
+        first = memory._store_at("alpha one", None, started)
         # Inside the window, so temporal proximity already linked them at 0.2.
-        second = memory._remember_at("gamma two", None, started + timedelta(seconds=60))
+        second = memory._store_at("gamma two", None, started + timedelta(seconds=60))
         inferred = memory._store.get_edge_between(first.id, second.id)
         assert inferred is not None and inferred.origin == "temporal"
 
@@ -511,8 +511,8 @@ def test_connect_claims_an_edge_the_graph_inferred() -> None:
 def test_connect_is_idempotent() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        first = memory._remember_at("alpha one", None, started)
-        second = memory._remember_at("gamma two", None, started + timedelta(seconds=3600))
+        first = memory._store_at("alpha one", None, started)
+        second = memory._store_at("gamma two", None, started + timedelta(seconds=3600))
         memory._connect_at(first.id, second.id, started + timedelta(seconds=3600))
         memory._connect_at(first.id, second.id, started + timedelta(seconds=3600))
 
@@ -526,15 +526,15 @@ def test_connect_is_idempotent() -> None:
 
 def test_connect_rejects_non_uuid_arguments() -> None:
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        first = memory.remember("alpha one")
+        first = memory.store("alpha one")
         with pytest.raises(InvalidArgumentError, match="two UUID"):
             memory.connect(first.id, cast(UUID, "not-a-uuid"))
 
 
 def test_forget_removes_a_connected_memory_and_its_edge() -> None:
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
-        first = memory.remember("alpha one")
-        second = memory.remember("gamma two")
+        first = memory.store("alpha one")
+        second = memory.store("gamma two")
         memory.connect(first.id, second.id)
         assert memory.stats().edges == 1
 
@@ -548,27 +548,27 @@ def test_forget_removes_a_connected_memory_and_its_edge() -> None:
 def test_maintenance_fires_on_the_interval_and_not_before() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with configured_memory(maintenance_interval=4) as memory:
-        anchor = memory._remember_at("alpha anchor", None, started)
-        stale = memory._remember_at("gamma stale", None, started)
+        anchor = memory._store_at("alpha anchor", None, started)
+        stale = memory._store_at("gamma stale", None, started)
         memory._connect_at(anchor.id, stale.id, started)
         # An explicit 0.5 edge is worth ~0.0004 after 300 days, well under the
         # 0.02 floor: exactly what maintenance is meant to collect.
         assert memory.stats().edges == 1
 
         much_later = started + timedelta(days=300)
-        memory._remember_at("delta third", None, much_later)
+        memory._store_at("delta third", None, much_later)
         # Three inserts so far; the interval has not come round.
         assert memory._store.get_edge_between(anchor.id, stale.id) is not None
 
-        memory._remember_at("delta fourth", None, much_later)
+        memory._store_at("delta fourth", None, much_later)
         assert memory._store.get_edge_between(anchor.id, stale.id) is None
 
 
 def test_maintenance_keeps_edges_decay_has_not_worn_out() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with configured_memory(maintenance_interval=2) as memory:
-        anchor = memory._remember_at("alpha anchor", None, started)
-        fresh = memory._remember_at("gamma fresh", None, started)
+        anchor = memory._store_at("alpha anchor", None, started)
+        fresh = memory._store_at("gamma fresh", None, started)
         memory._connect_at(anchor.id, fresh.id, started)
 
         # Same instant, so nothing has aged: a maintenance pass must not touch
@@ -580,14 +580,14 @@ def test_maintenance_keeps_edges_decay_has_not_worn_out() -> None:
 def test_maintenance_reports_the_smaller_graph_through_stats() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with configured_memory(maintenance_interval=4) as memory:
-        first = memory._remember_at("alpha one", None, started)
-        second = memory._remember_at("gamma two", None, started)
+        first = memory._store_at("alpha one", None, started)
+        second = memory._store_at("gamma two", None, started)
         memory._connect_at(first.id, second.id, started)
         assert memory.stats().edges == 1
 
         much_later = started + timedelta(days=300)
-        memory._remember_at("delta three", None, much_later)
-        memory._remember_at("delta four", None, much_later)
+        memory._store_at("delta three", None, much_later)
+        memory._store_at("delta four", None, much_later)
         # stats() reads through the confidence cache, so a stale cache here
         # would mean the prune skipped its invalidation. The worn-out explicit
         # edge is gone; the temporal edge those two inserts just created is
@@ -597,27 +597,27 @@ def test_maintenance_reports_the_smaller_graph_through_stats() -> None:
         assert after.edges_by_origin["temporal"] == 1
 
 
-def test_a_deduplicated_remember_does_not_advance_maintenance() -> None:
+def test_a_deduplicated_store_does_not_advance_maintenance() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
     with configured_memory(maintenance_interval=2) as memory:
-        anchor = memory._remember_at("alpha anchor", None, started)
-        stale = memory._remember_at("gamma stale", None, started)
+        anchor = memory._store_at("alpha anchor", None, started)
+        stale = memory._store_at("gamma stale", None, started)
         memory._connect_at(anchor.id, stale.id, started)
 
         much_later = started + timedelta(days=300)
-        # Re-remembering existing content stores nothing, so it grew no graph
+        # Storing existing content again inserts nothing, so it grew no graph
         # and must not count toward the interval.
-        memory._remember_at("alpha anchor", None, much_later)
-        memory._remember_at("gamma stale", None, much_later)
+        memory._store_at("alpha anchor", None, much_later)
+        memory._store_at("gamma stale", None, much_later)
         assert memory._store.get_edge_between(anchor.id, stale.id) is not None
 
 
 def test_forget_stats_and_context_manager() -> None:
     memory = SynapticDB(":memory:", embedding_fn=embedding)
     with memory:
-        remembered = memory.remember("alpha")
+        stored = memory.store("alpha")
         assert memory.stats().memories == 1
-        memory.forget(remembered.id)
+        memory.forget(stored.id)
         assert memory.stats().memories == 0
         with pytest.raises(NotFoundError):
             memory.forget(uuid4())
@@ -636,7 +636,7 @@ def test_closed_instance_rejects_operations_before_validation_or_embedding() -> 
     memory.close()
     invalid_id = cast(UUID, "not-a-uuid")
     calls = (
-        lambda: memory.remember(""),
+        lambda: memory.store(""),
         lambda: memory.recall("", top_k=0, min_confidence=cast(float, "invalid")),
         lambda: memory.feedback(invalid_id, positive=cast(bool, "invalid")),
         lambda: memory.connect(invalid_id, invalid_id),
@@ -708,7 +708,7 @@ def test_constructor_exposes_no_tuning_parameters() -> None:
 
 @pytest.mark.parametrize(
     "name",
-    ["remember", "recall", "feedback", "connect", "forget", "stats", "close", "__enter__", "__exit__"],
+    ["store", "recall", "feedback", "connect", "forget", "stats", "close", "__enter__", "__exit__"],
 )
 def test_public_methods_are_documented(name: str) -> None:
     assert inspect.getdoc(getattr(SynapticDB, name))

@@ -106,22 +106,22 @@ class SynapticDB:
             self._store.close()
             raise
 
-    def remember(
+    def store(
         self,
         content: str,
         metadata: Mapping[str, object] | None = None,
     ) -> Memory:
         """Store one memory and link it to what was stored around it.
 
-        Content is deduplicated by hash, so remembering the same text twice
+        Content is deduplicated by hash, so storing the same text twice
         returns the first memory and creates no second copy or new edges.
         Storing also grows the association graph: memories written close
         together in time gain a temporal edge, and every hundredth insert runs
         the maintenance pass that prunes edges decayed below the floor.
         """
-        return self._remember_at(content, metadata, datetime.now(timezone.utc))
+        return self._store_at(content, metadata, datetime.now(timezone.utc))
 
-    def _remember_at(
+    def _store_at(
         self,
         content: str,
         metadata: Mapping[str, object] | None,
@@ -131,7 +131,7 @@ class SynapticDB:
         text = _bounded_text(content, "content")
         stored_metadata = _metadata(metadata)
         embedding = self._embedder.embed(text)
-        seeds = self._load_remember_edge_seeds(embedding, created_at)
+        seeds = self._load_store_edge_seeds(embedding, created_at)
         result = self._store.insert_memory_with_edges(
             text,
             stored_metadata,
@@ -142,17 +142,17 @@ class SynapticDB:
         )
         if result.inserted:
             self._confidence.invalidate()
-            self._maintain_if_due(result.remember_count, created_at)
+            self._maintain_if_due(result.store_count, created_at)
         return result.memory
 
-    def _maintain_if_due(self, remember_count: int, now: datetime) -> None:
+    def _maintain_if_due(self, store_count: int, now: datetime) -> None:
         """Run the PRD §6.5 pass every Nth insert, at this insert's instant.
 
         Errors are not caught. A prune that cannot run leaves the graph
         accumulating dead edges indefinitely, which is worse than a loud
         failure; the memory itself is already committed either way.
         """
-        if remember_count % self._policy.maintenance_interval != 0:
+        if store_count % self._policy.maintenance_interval != 0:
             return
         decay = self._policy.decay
         pruned = self._store.prune_weak_edges(
@@ -164,7 +164,7 @@ class SynapticDB:
         if pruned:
             self._confidence.invalidate()
 
-    def _load_remember_edge_seeds(
+    def _load_store_edge_seeds(
         self,
         embedding: Sequence[float],
         created_at: datetime,

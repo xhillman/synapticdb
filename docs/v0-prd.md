@@ -61,7 +61,7 @@ rerank. v0 rebuilds exactly the part that won.
 | Explicit feedback (positive/negative per query) | ✅ |
 | Edge decay + opportunistic pruning | ✅ |
 | Per-recall attribution (`via`: search / association / both) | ✅ |
-| Content-hash dedupe on `remember` | ✅ |
+| Content-hash dedupe on `store()` | ✅ |
 | Optional embeddings extra (`synapticdb[embeddings]`) with MiniLM default | ✅ |
 | Benchmark harness in-repo (`bench/`) | ✅ |
 
@@ -89,7 +89,7 @@ mem = SynapticDB(
 )
 
 # --- core loop -----------------------------------------------------------
-m = mem.remember(
+m = mem.store(
     "Client X requires SOC2 for all vendor deployments",
     metadata={"source": "call-notes"},        # optional, JSON-serializable
 )                                             # -> Memory (existing one if duplicate content)
@@ -303,13 +303,13 @@ runs (it feeds learning and attribution) even when α is tiny.
 Four mechanisms, one weight scale [0, 1], one decay law. All edge weights
 below are *initial* weights; reinforcement moves them.
 
-### 6.1 Semantic seeding (at `remember`)
+### 6.1 Semantic seeding (at `store()`)
 
 Link the new memory to the top **3** existing memories with cosine
 similarity ≥ **0.6**, initial weight **0.25**, origin `semantic`. If the
 edge exists, reinforce (§6.6) instead.
 
-### 6.2 Temporal proximity (at `remember`)
+### 6.2 Temporal proximity (at `store()`)
 
 Link the new memory to the **3** most recent memories with
 `created_at` within the last **600 s**, initial weight **0.2**, origin
@@ -336,7 +336,7 @@ start higher (0.5) rather than being exempt, so one rule covers everything.
 
 ### 6.5 Pruning + maintenance
 
-Every **100** `remember` calls, run a synchronous, bounded maintenance
+Every **100** `store()` calls, run a synchronous, bounded maintenance
 pass: delete edges with effective weight < **0.02** and expire old query
 rows (§4). No background threads, no schedulers in v0.
 
@@ -398,7 +398,7 @@ Exposed as `Stats.maturity` and `RecallResult.maturity`.
 ### 7.2 Vector index
 
 An in-process `numpy` float32 matrix (ids aligned array), built lazily on
-first `recall` and updated incrementally on `remember`/`forget`. Brute-force
+first `recall()` and updated incrementally on `store()` and `forget()`. Brute-force
 cosine is < 10 ms at 50k × 384 dims — no ANN library in v0. If profiling at
 larger scale demands it, `sqlite-vec` becomes an optional extra in v0.2+;
 the schema already stores embeddings per-row so no migration is needed.
@@ -413,7 +413,7 @@ the schema already stores embeddings per-row so no migration is needed.
   on first use.
 - `embedding_fn: Callable[[str], Sequence[float]]` always wins when given.
 - If `embedding_fn is None` and the extra is not installed, the constructor
-  succeeds but the first `remember`/`recall` raises `EmbeddingError` with
+  succeeds but the first `store()` or `recall()` raises `EmbeddingError` with
   the install hint. **No silent hash-embedding fallback** — fake vectors
   produce fake retrieval and poison the graph.
 - Embedding dimension is recorded in a `meta` pragma table on first write;
@@ -441,7 +441,7 @@ the schema already stores embeddings per-row so no migration is needed.
 | 14 | explicit feedback rate | 0.15 | calibrate in bench |
 | 15 | explicit `connect` weight | 0.5 | judgment |
 | 16 | decay half-life / prune threshold | 30 d / 0.02 | calibrate in bench |
-| 17 | maintenance interval | 100 remembers | judgment |
+| 17 | maintenance interval | 100 store calls | judgment |
 
 Constructor exposes **none** of these in v0 except `top_k` per-call. A
 single private `_params` dict exists for the benchmark harness to sweep.
@@ -576,10 +576,10 @@ Measured at 10,000 memories, 384-dim embeddings, M-series laptop.
 
 | Operation | p99 |
 |---|---|
-| `remember` (excluding embedding call) | < 50 ms |
+| `store()` (excluding embedding call) | < 50 ms |
 | `recall` full pipeline (excluding embedding call) | < 100 ms |
 | `feedback` | < 20 ms |
-| maintenance pass | < 200 ms, synchronous, every 100 remembers |
+| maintenance pass | < 200 ms, synchronous, every 100 store calls |
 | `stats` | < 10 ms |
 
 ---
