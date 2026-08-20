@@ -192,6 +192,16 @@ class SynapticDB:
         )
         return semantic_seeds + temporal_seeds
 
+    def get(self, memory_id: UUID | str) -> Memory:
+        """Return one memory by id without changing access or graph state.
+
+        `memory_id` accepts either a UUID object or its string representation.
+        Raises NotFoundError when no stored memory has that id.
+        """
+        self._require_open()
+        identifier = _identifier(memory_id, "memory_id")
+        return self._store.get_memory(identifier)
+
     def recall(
         self,
         query: str,

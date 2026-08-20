@@ -40,6 +40,24 @@ def test_store_recall_and_dedupe_form_a_walking_skeleton() -> None:
         assert result.maturity == 0.0
 
 
+def test_get_accepts_uuid_and_string_without_changing_memory_state() -> None:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
+        stored = memory.store("alpha", {"source": "call"})
+        before = memory._store.get_memory(stored.id)
+
+        assert memory.get(stored.id) == stored
+        assert memory.get(str(stored.id)) == stored
+        assert memory._store.get_memory(stored.id) == before
+
+
+def test_get_rejects_invalid_id_and_raises_for_unknown_memory() -> None:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
+        with pytest.raises(InvalidArgumentError, match=r"^memory_id must be a UUID or UUID string$"):
+            memory.get("not-a-uuid")
+        with pytest.raises(NotFoundError):
+            memory.get(str(uuid4()))
+
+
 def test_recall_alpha_zero_scores_equal_normalized_rrf() -> None:
     with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         first = memory.store("alpha alpha alpha alpha")
@@ -645,6 +663,7 @@ def test_closed_instance_rejects_operations_before_validation_or_embedding() -> 
     invalid_id = cast(UUID, "not-a-uuid")
     calls = (
         lambda: memory.store(""),
+        lambda: memory.get(invalid_id),
         lambda: memory.recall("", top_k=0, min_confidence=cast(float, "invalid")),
         lambda: memory.feedback(invalid_id, positive=cast(bool, "invalid")),
         lambda: memory.connect(invalid_id, invalid_id),
@@ -716,7 +735,7 @@ def test_constructor_exposes_no_tuning_parameters() -> None:
 
 @pytest.mark.parametrize(
     "name",
-    ["store", "recall", "feedback", "connect", "forget", "stats", "close", "__enter__", "__exit__"],
+    ["store", "get", "recall", "feedback", "connect", "forget", "stats", "close", "__enter__", "__exit__"],
 )
 def test_public_methods_are_documented(name: str) -> None:
     assert inspect.getdoc(getattr(SynapticDB, name))

@@ -93,6 +93,7 @@ m = mem.store(
     "Client X requires SOC2 for all vendor deployments",
     metadata={"source": "call-notes"},        # optional, JSON-serializable
 )                                             # -> Memory (existing one if duplicate content)
+mem.get(m.id)                                 # UUID | str -> Memory; read-only exact lookup
 
 result = mem.recall(
     "deployment requirements for client X",
