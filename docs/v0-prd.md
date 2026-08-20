@@ -81,9 +81,9 @@ rerank. v0 rebuilds exactly the part that won.
 Synchronous. One class, one exception hierarchy. Python ≥ 3.10.
 
 ```python
-from synapticdb import Synaptic
+from synapticdb import SynapticDB
 
-mem = Synaptic(
+mem = SynapticDB(
     db_path="agent.db",          # ":memory:" supported
     embedding_fn=None,           # str -> Sequence[float]; None = built-in default (§8)
 )
@@ -172,7 +172,7 @@ class Stats(BaseModel):
     db_path: str
 ```
 
-Concurrency contract: a `Synaptic` instance is **not** thread-safe; one
+Concurrency contract: a `SynapticDB` instance is **not** thread-safe; one
 instance per process/thread, single writer per DB file. WAL mode is enabled
 so concurrent readers of the file are safe.
 
@@ -491,8 +491,8 @@ synapticdb/
 ├── docs/
 │   └── v0-prd.md             # this document
 ├── src/synapticdb/
-│   ├── __init__.py           # exports: Synaptic, Memory, Recalled, RecallResult, Stats, errors
-│   ├── api.py                # Synaptic class, orchestration        (~350 lines)
+│   ├── __init__.py           # exports: SynapticDB, Memory, Recalled, RecallResult, Stats, errors
+│   ├── api.py                # SynapticDB class, orchestration        (~350 lines)
 │   ├── store.py              # SQLite + FTS + vector matrix          (~500 lines)
 │   ├── retrieval.py          # search, RRF, blend                    (~200 lines)
 │   ├── activation.py         # spreading activation                  (~150 lines)

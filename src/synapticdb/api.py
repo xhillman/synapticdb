@@ -1,4 +1,4 @@
-"""Public synchronous Synaptic API."""
+"""Public synchronous SynapticDB API."""
 
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ class _FeedbackTarget:
     edge: Edge | None
 
 
-class Synaptic:
+class SynapticDB:
     """Own one memory database and its retrieval resources."""
 
     def __init__(
@@ -82,7 +82,7 @@ class Synaptic:
         db_path: str | Path,
         embedding_fn: EmbeddingFunction | None,
         policy: RuntimePolicy,
-    ) -> Synaptic:
+    ) -> SynapticDB:
         """Build an internal runtime with one complete policy."""
         instance = cls.__new__(cls)
         instance._initialize(db_path, embedding_fn, policy)
@@ -524,7 +524,7 @@ class Synaptic:
         """Release the database connection. Calling this twice is harmless."""
         self._store.close()
 
-    def __enter__(self) -> Synaptic:
+    def __enter__(self) -> SynapticDB:
         """Enter a context that closes the database on exit."""
         self._require_open()
         return self
@@ -549,7 +549,7 @@ class Synaptic:
 
     def _require_open(self) -> None:
         if self._store.closed:
-            raise RuntimeError("Synaptic instance is closed")
+            raise RuntimeError("SynapticDB instance is closed")
 
 
 def _bounded_text(value: str, label: str) -> str:

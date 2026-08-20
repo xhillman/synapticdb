@@ -1,6 +1,6 @@
 """SynapticDB public package."""
 
-from synapticdb.api import Synaptic
+from synapticdb.api import SynapticDB
 from synapticdb.models import (
     EmbeddingError,
     InvalidArgumentError,
@@ -22,6 +22,6 @@ __all__: tuple[str, ...] = (
     "RecallResult",
     "Recalled",
     "Stats",
-    "Synaptic",
+    "SynapticDB",
     "SynapticError",
 )

@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 
 import synapticdb.api as api_module
-from synapticdb import EmbeddingError, InvalidArgumentError, NotFoundError, Synaptic
+from synapticdb import EmbeddingError, InvalidArgumentError, NotFoundError, SynapticDB
 from synapticdb.learning import LINKED_RESULT_COUNT, SEMANTIC_SEED_CALIBRATION, default_parameters, runtime_policy
 from synapticdb.retrieval import min_max_normalize, reciprocal_rank_fusion
 from synapticdb.store import Store
@@ -21,13 +21,13 @@ def embedding(text: str) -> Sequence[float]:
     )
 
 
-def configured_memory(**overrides: object) -> Synaptic:
+def configured_memory(**overrides: object) -> SynapticDB:
     """Build a private-policy runtime for behavior tests."""
-    return Synaptic._with_policy(":memory:", embedding, runtime_policy(overrides))
+    return SynapticDB._with_policy(":memory:", embedding, runtime_policy(overrides))
 
 
 def test_remember_recall_and_dedupe_form_a_walking_skeleton() -> None:
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         first = memory.remember("alpha beta", {"source": "call"})
         duplicate = memory.remember(" alpha beta ", {"source": "other"})
         memory.remember("gamma delta", {"source": "email"})
@@ -41,7 +41,7 @@ def test_remember_recall_and_dedupe_form_a_walking_skeleton() -> None:
 
 
 def test_recall_alpha_zero_scores_equal_normalized_rrf() -> None:
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         first = memory.remember("alpha alpha alpha alpha")
         second = memory.remember("alpha delta delta delta")
         result = memory.recall("alpha", top_k=2)
@@ -55,7 +55,7 @@ def test_recall_alpha_zero_scores_equal_normalized_rrf() -> None:
 
 def test_semantic_seeding_is_disabled_by_default() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         first = memory._remember_at("alpha first", None, started)
         # Far outside the temporal window, so any edge would be semantic.
         second = memory._remember_at("alpha second", None, started + timedelta(seconds=3600))
@@ -93,7 +93,7 @@ def test_private_semantic_parameters_support_benchmark_calibration() -> None:
 
 def test_remember_links_temporal_boundary_and_skips_outside_window() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         first = memory._remember_at("alpha first", None, started)
         boundary = memory._remember_at("gamma boundary", None, started + timedelta(seconds=600))
         outside = memory._remember_at("alpha outside", None, started + timedelta(seconds=1201))
@@ -118,7 +118,7 @@ def test_semantic_and_temporal_overlap_reinforces_one_edge() -> None:
 
 def test_recall_persists_unit_energies_for_fusion_only_results() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         first = memory._remember_at("alpha beta", None, started)
         second = memory._remember_at(
             "alpha delta delta delta",
@@ -131,7 +131,7 @@ def test_recall_persists_unit_energies_for_fusion_only_results() -> None:
 
 
 def test_recall_blends_association_and_persists_activation_evidence() -> None:
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         anchor = memory.remember("alpha anchor")
         for index in range(40):
             memory.remember(f"gamma filler {index}")
@@ -151,7 +151,7 @@ def test_recall_blends_association_and_persists_activation_evidence() -> None:
 
 def test_recall_links_its_top_results_and_reinforces_on_repeat() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         first = memory._remember_at("alpha one", None, started)
         second = memory._remember_at("alpha two", None, started + timedelta(seconds=601))
 
@@ -177,7 +177,7 @@ def test_recall_links_its_top_results_and_reinforces_on_repeat() -> None:
 
 def test_recall_below_two_results_learns_nothing() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         memory._remember_at("alpha only", None, started)
         memory._recall_at("alpha", 10, None, started + timedelta(seconds=601))
         assert memory.stats().edges == 0
@@ -185,7 +185,7 @@ def test_recall_below_two_results_learns_nothing() -> None:
 
 def test_a_new_co_retrieval_edge_carries_no_energy_until_reinforced() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         anchor = memory._remember_at("alpha anchor", None, started)
         far = memory._remember_at("delta far", None, started + timedelta(seconds=601))
         # A single 0.05 edge: activation would carry 1.0 * 0.05 * 0.8 = 0.04,
@@ -204,7 +204,7 @@ def test_a_new_co_retrieval_edge_carries_no_energy_until_reinforced() -> None:
 
 def test_activation_energy_falls_as_the_connecting_edge_ages() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         anchor = memory._remember_at("alpha anchor", None, started)
         for index in range(40):
             memory._remember_at(f"gamma filler {index}", None, started)
@@ -224,7 +224,7 @@ def test_activation_energy_falls_as_the_connecting_edge_ages() -> None:
 
 def test_recall_reads_every_edge_at_one_instant() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         first = memory._remember_at("alpha one", None, started)
         second = memory._remember_at("alpha two", None, started)
         result = memory._recall_at("alpha", 2, None, started)
@@ -233,7 +233,7 @@ def test_recall_reads_every_edge_at_one_instant() -> None:
         assert set(stored.energies) == {first.id, second.id}
 
 
-def _two_memory_recall(memory: Synaptic, started: datetime) -> tuple[UUID, UUID, UUID]:
+def _two_memory_recall(memory: SynapticDB, started: datetime) -> tuple[UUID, UUID, UUID]:
     first = memory._remember_at("alpha one", None, started)
     second = memory._remember_at("alpha two", None, started + timedelta(seconds=601))
     result = memory._recall_at("alpha", 10, None, started + timedelta(seconds=1200))
@@ -242,7 +242,7 @@ def _two_memory_recall(memory: Synaptic, started: datetime) -> tuple[UUID, UUID,
 
 def test_positive_feedback_reinforces_the_edge_between_results() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         first_id, second_id, query_id = _two_memory_recall(memory, started)
         before = memory._store.get_edge_between(first_id, second_id)
         assert before is not None and before.weight == pytest.approx(0.05)
@@ -258,7 +258,7 @@ def test_positive_feedback_reinforces_the_edge_between_results() -> None:
 
 def test_negative_feedback_weakens_without_creating_edges() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         first_id, second_id, query_id = _two_memory_recall(memory, started)
         before = memory._store.get_edge_between(first_id, second_id)
         assert before is not None
@@ -273,7 +273,7 @@ def test_negative_feedback_weakens_without_creating_edges() -> None:
 
 def test_positive_feedback_creates_a_missing_result_pair_edge() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         first = memory._remember_at("alpha one", None, started)
         second = memory._remember_at("alpha two", None, started + timedelta(seconds=601))
         # A saved query without the co-retrieval pass, so no edge exists yet.
@@ -294,7 +294,7 @@ def test_positive_feedback_creates_a_missing_result_pair_edge() -> None:
 
 def test_feedback_edge_creation_is_bounded_by_the_linked_result_count() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         # Ten results, each far enough apart that no temporal edge forms, so
         # every edge afterwards is one feedback created.
         ids = [
@@ -318,7 +318,7 @@ def test_feedback_edge_creation_is_bounded_by_the_linked_result_count() -> None:
 
 def test_repeated_feedback_raises_and_unknown_query_raises() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         _, _, query_id = _two_memory_recall(memory, started)
         memory.feedback(query_id, positive=True)
         with pytest.raises(InvalidArgumentError, match="already recorded"):
@@ -329,7 +329,7 @@ def test_repeated_feedback_raises_and_unknown_query_raises() -> None:
 
 def test_feedback_skips_pairs_whose_memory_was_forgotten() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         first_id, second_id, query_id = _two_memory_recall(memory, started)
         memory.forget(second_id)
         # The query row still names the forgotten memory; feedback must not
@@ -341,7 +341,7 @@ def test_feedback_skips_pairs_whose_memory_was_forgotten() -> None:
 
 def test_recall_persists_energies_for_activated_non_results() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         anchor = memory._remember_at("alpha anchor", None, started)
         hidden = memory._remember_at("delta hidden", None, started + timedelta(seconds=601))
         memory._store.insert_edge(anchor.id, hidden.id, 1.0, "explicit")
@@ -357,7 +357,7 @@ def test_recall_persists_energies_for_activated_non_results() -> None:
 
 def test_confidence_reports_similarity_not_rank_position() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         close = memory._remember_at("alpha alpha alpha", None, started)
         far = memory._remember_at("gamma gamma gamma", None, started + timedelta(seconds=3600))
 
@@ -372,7 +372,7 @@ def test_confidence_reports_similarity_not_rank_position() -> None:
 
 def test_confidence_does_not_drift_with_graph_state() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         anchor = memory._remember_at("alpha one", None, started)
         memory._remember_at("alpha two", None, started + timedelta(seconds=601))
 
@@ -395,7 +395,7 @@ def test_confidence_is_clamped_to_the_unit_scale() -> None:
         return (-1.0, 0.0) if "gamma" in text else (1.0, 0.0)
 
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=signed) as memory:
+    with SynapticDB(":memory:", embedding_fn=signed) as memory:
         opposed = memory._remember_at("gamma opposite", None, started)
         result = memory._recall_at("alpha", 10, None, started + timedelta(seconds=3600))
         confidence = {r.memory.id: r.confidence for r in result.memories}[opposed.id]
@@ -404,7 +404,7 @@ def test_confidence_is_clamped_to_the_unit_scale() -> None:
 
 def test_min_confidence_can_return_nothing_at_all() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         memory._remember_at("gamma one", None, started)
         memory._remember_at("gamma two", None, started + timedelta(seconds=3600))
 
@@ -421,7 +421,7 @@ def test_min_confidence_can_return_nothing_at_all() -> None:
 
 def test_min_confidence_keeps_strong_matches_and_drops_weak_ones() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         strong = memory._remember_at("alpha alpha alpha", None, started)
         memory._remember_at("gamma gamma gamma", None, started + timedelta(seconds=3600))
 
@@ -432,7 +432,7 @@ def test_min_confidence_keeps_strong_matches_and_drops_weak_ones() -> None:
 
 def test_filtered_results_are_not_learned_from() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         first = memory._remember_at("alpha one", None, started)
         second = memory._remember_at("gamma two", None, started + timedelta(seconds=3600))
 
@@ -445,14 +445,14 @@ def test_filtered_results_are_not_learned_from() -> None:
 
 @pytest.mark.parametrize("value", [-0.1, 1.5, float("nan"), True, "high"])
 def test_min_confidence_rejects_invalid_values(value: object) -> None:
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         memory.remember("alpha")
         with pytest.raises(InvalidArgumentError, match="min_confidence"):
             memory.recall("alpha", min_confidence=cast(float, value))
 
 
 def test_where_filter_requires_present_equal_metadata() -> None:
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         call = memory.remember("alpha call", {"source": "call", "optional": None})
         memory.remember("alpha email", {"source": "email"})
         matching = memory.recall("alpha", where={"source": "call"})
@@ -462,7 +462,7 @@ def test_where_filter_requires_present_equal_metadata() -> None:
 
 
 def test_empty_database_recall_is_persisted_and_returns_no_results() -> None:
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         result = memory.recall("alpha")
         assert result.memories == []
         assert result.maturity == 0.0
@@ -471,7 +471,7 @@ def test_empty_database_recall_is_persisted_and_returns_no_results() -> None:
 
 def test_connect_creates_the_only_user_authored_edge() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         first = memory._remember_at("alpha one", None, started)
         # Outside the 600 s temporal window, so nothing links these two yet.
         second = memory._remember_at("gamma two", None, started + timedelta(seconds=3600))
@@ -488,7 +488,7 @@ def test_connect_creates_the_only_user_authored_edge() -> None:
 
 def test_connect_claims_an_edge_the_graph_inferred() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         first = memory._remember_at("alpha one", None, started)
         # Inside the window, so temporal proximity already linked them at 0.2.
         second = memory._remember_at("gamma two", None, started + timedelta(seconds=60))
@@ -510,7 +510,7 @@ def test_connect_claims_an_edge_the_graph_inferred() -> None:
 
 def test_connect_is_idempotent() -> None:
     started = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         first = memory._remember_at("alpha one", None, started)
         second = memory._remember_at("gamma two", None, started + timedelta(seconds=3600))
         memory._connect_at(first.id, second.id, started + timedelta(seconds=3600))
@@ -525,14 +525,14 @@ def test_connect_is_idempotent() -> None:
 
 
 def test_connect_rejects_non_uuid_arguments() -> None:
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         first = memory.remember("alpha one")
         with pytest.raises(InvalidArgumentError, match="two UUID"):
             memory.connect(first.id, cast(UUID, "not-a-uuid"))
 
 
 def test_forget_removes_a_connected_memory_and_its_edge() -> None:
-    with Synaptic(":memory:", embedding_fn=embedding) as memory:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memory:
         first = memory.remember("alpha one")
         second = memory.remember("gamma two")
         memory.connect(first.id, second.id)
@@ -613,7 +613,7 @@ def test_a_deduplicated_remember_does_not_advance_maintenance() -> None:
 
 
 def test_forget_stats_and_context_manager() -> None:
-    memory = Synaptic(":memory:", embedding_fn=embedding)
+    memory = SynapticDB(":memory:", embedding_fn=embedding)
     with memory:
         remembered = memory.remember("alpha")
         assert memory.stats().memories == 1
@@ -632,7 +632,7 @@ def test_closed_instance_rejects_operations_before_validation_or_embedding() -> 
         embedded.append(text)
         return (1.0, 0.0)
 
-    memory = Synaptic(":memory:", embedding_fn=tracked_embedding)
+    memory = SynapticDB(":memory:", embedding_fn=tracked_embedding)
     memory.close()
     invalid_id = cast(UUID, "not-a-uuid")
     calls = (
@@ -645,7 +645,7 @@ def test_closed_instance_rejects_operations_before_validation_or_embedding() -> 
         memory.__enter__,
     )
     for call in calls:
-        with pytest.raises(RuntimeError, match=r"^Synaptic instance is closed$"):
+        with pytest.raises(RuntimeError, match=r"^SynapticDB instance is closed$"):
             call()
     memory.close()
     memory.__exit__(None, None, None)
@@ -653,10 +653,10 @@ def test_closed_instance_rejects_operations_before_validation_or_embedding() -> 
 
 
 def test_context_exit_closes_after_an_error() -> None:
-    memory = Synaptic(":memory:", embedding_fn=embedding)
+    memory = SynapticDB(":memory:", embedding_fn=embedding)
     with pytest.raises(LookupError, match="context failed"), memory:
         raise LookupError("context failed")
-    with pytest.raises(RuntimeError, match=r"^Synaptic instance is closed$"):
+    with pytest.raises(RuntimeError, match=r"^SynapticDB instance is closed$"):
         memory.stats()
 
 
@@ -676,7 +676,7 @@ def test_constructor_closes_store_and_preserves_embedder_error(monkeypatch: pyte
     monkeypatch.setattr(api_module, "Embedder", fail_embedder)
     try:
         with pytest.raises(EmbeddingError) as raised:
-            Synaptic(":memory:", embedding_fn=embedding)
+            SynapticDB(":memory:", embedding_fn=embedding)
         assert raised.value is original_error
         with pytest.raises(RuntimeError, match=r"^store is closed$"):
             store.embedding_dimension()
@@ -687,7 +687,7 @@ def test_constructor_closes_store_and_preserves_embedder_error(monkeypatch: pyte
 @pytest.mark.parametrize("top_k", [0, 101, True])
 def test_recall_rejects_invalid_top_k(top_k: object) -> None:
     with (
-        Synaptic(":memory:", embedding_fn=embedding) as memory,
+        SynapticDB(":memory:", embedding_fn=embedding) as memory,
         pytest.raises(InvalidArgumentError, match="top_k"),
     ):
         memory.recall("alpha", top_k=cast(int, top_k))
@@ -700,7 +700,7 @@ def test_constructor_exposes_no_tuning_parameters() -> None:
     intend to make. This fails the moment one leaks out, rather than at the
     point someone depends on it.
     """
-    signature = inspect.signature(Synaptic.__init__)
+    signature = inspect.signature(SynapticDB.__init__)
     assert list(signature.parameters) == ["self", "db_path", "embedding_fn"]
     tunable = set(default_parameters()) - {"top_k"}
     assert tunable.isdisjoint(signature.parameters)
@@ -711,4 +711,4 @@ def test_constructor_exposes_no_tuning_parameters() -> None:
     ["remember", "recall", "feedback", "connect", "forget", "stats", "close", "__enter__", "__exit__"],
 )
 def test_public_methods_are_documented(name: str) -> None:
-    assert inspect.getdoc(getattr(Synaptic, name))
+    assert inspect.getdoc(getattr(SynapticDB, name))

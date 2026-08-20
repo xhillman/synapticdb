@@ -51,13 +51,13 @@ def test_readme_confidence_example_runs_verbatim() -> None:
     snippet = next((block for block in blocks if "confidence" in block), None)
     assert snippet is not None, "README should show how to filter on confidence"
 
-    from synapticdb import Synaptic
+    from synapticdb import SynapticDB
 
     def embedding(text: str) -> tuple[float, float]:
         lowered = text.lower()
         return (float(lowered.count("client")), float(lowered.count("invoice")))
 
-    with Synaptic(":memory:", embedding_fn=embedding) as memories:
+    with SynapticDB(":memory:", embedding_fn=embedding) as memories:
         memories.remember("Client X requires SOC2 for vendor deployments")
         namespace: dict[str, Any] = {"memories": memories}
         exec(compile(snippet, "README.md", "exec"), namespace)

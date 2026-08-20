@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 from uuid import UUID
 
-from synapticdb import Synaptic
+from synapticdb import SynapticDB
 from synapticdb.embeddings import EmbeddingFunction
 from synapticdb.learning import (
     RuntimePolicy,
@@ -145,7 +145,7 @@ class SynapticRetriever:
         if not embedding_name:
             raise ValueError("embedding_name must be non-empty")
         policy = _benchmark_policy(semantic_seed, temporal_link, overrides)
-        self._memory = Synaptic._with_policy(":memory:", embedding_fn, policy)
+        self._memory = SynapticDB._with_policy(":memory:", embedding_fn, policy)
         parameters = policy_parameters(policy)
         self.config = SynapticConfig(
             embedding=embedding_name,
@@ -183,7 +183,7 @@ class SynapticRetriever:
         try:
             ranked = tuple(self._benchmark_ids[item.memory.id] for item in result.memories)
         except KeyError as exc:
-            raise RuntimeError("Synaptic returned an unknown benchmark memory") from exc
+            raise RuntimeError("SynapticDB returned an unknown benchmark memory") from exc
         path_ids = self._path_benchmark_ids(result.query_id)
         return Retrieval(
             ranked,

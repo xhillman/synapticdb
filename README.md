@@ -39,9 +39,9 @@ do not want a PyTorch-sized dependency. Passing `embedding_fn` overrides the
 default either way.
 
 ```python
-from synapticdb import Synaptic
+from synapticdb import SynapticDB
 
-with Synaptic("synaptic.db") as memories:
+with SynapticDB("synaptic.db") as memories:
     memories.remember("Client X requires SOC2 for vendor deployments")
     result = memories.recall("deployment requirements for Client X")
     print(result.memories[0].memory.content)
@@ -56,7 +56,7 @@ payload = result.to_dict()
 json_text = result.to_json()
 ```
 
-Pass `embedding_fn` to `Synaptic` to use a different local or hosted provider.
+Pass `embedding_fn` to `SynapticDB` to use a different local or hosted provider.
 The function takes a string and returns a numeric sequence with a stable
 dimension.
 

@@ -20,7 +20,7 @@ _SECONDS_PER_DAY = 86_400.0
 
 # How many of a recall's top results are close enough to link. Both learning
 # mechanisms that create edges from results use it: co-retrieval (PRD §6.3) and
-# explicit feedback (§6.6, as amended — see api.Synaptic._feedback_pairs). One
+# explicit feedback (§6.6, as amended — see api.SynapticDB._feedback_pairs). One
 # constant because it is one idea, and letting the two drift apart is what
 # produced the write amplification the amendment fixes.
 #
@@ -78,7 +78,7 @@ class DecayConfig:
 
 @dataclass(frozen=True, slots=True)
 class RuntimePolicy:
-    """The complete validated policy used by one Synaptic runtime."""
+    """The complete validated policy used by one SynapticDB runtime."""
 
     top_k: int
     fusion: FusionConfig

@@ -11,6 +11,6 @@ def test_import() -> None:
         "RecallResult",
         "Recalled",
         "Stats",
-        "Synaptic",
+        "SynapticDB",
         "SynapticError",
     )
