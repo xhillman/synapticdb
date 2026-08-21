@@ -24,9 +24,39 @@ class FakeSentenceTransformersModule(ModuleType):
     SentenceTransformer = FakeSentenceTransformer
 
 
+class FakeOpenAIResponse:
+    output_text = "Client X requires SOC 2 for vendor deployments."
+
+
+class FakeResponses:
+    def __init__(self) -> None:
+        self.model: str | None = None
+        self.input: str | None = None
+
+    def create(self, *, model: str, input: str) -> FakeOpenAIResponse:
+        self.model = model
+        self.input = input
+        return FakeOpenAIResponse()
+
+
+class FakeOpenAI:
+    def __init__(self) -> None:
+        self.responses = FakeResponses()
+
+
+class FakeOpenAIModule(ModuleType):
+    def __init__(self) -> None:
+        super().__init__("openai")
+        self.client = FakeOpenAI()
+
+    def OpenAI(self) -> FakeOpenAI:
+        return self.client
+
+
 def test_readme_quickstart_runs_verbatim(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     match = _PYTHON_BLOCK.search(readme)
@@ -34,9 +64,42 @@ def test_readme_quickstart_runs_verbatim(
         raise AssertionError("README requires a Python quickstart block")
     fake_module = FakeSentenceTransformersModule("sentence_transformers")
     monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
+    monkeypatch.chdir(tmp_path)
     exec(compile(match.group("code"), "README.md", "exec"), {})
     output = capsys.readouterr().out
     assert output.strip() == "Client X requires SOC2 for vendor deployments"
+
+
+def test_readme_agent_example_runs_verbatim(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    blocks = [match.group("code") for match in _PYTHON_BLOCK.finditer(readme)]
+    snippet = next((block for block in blocks if "client.responses.create" in block), None)
+    if snippet is None:
+        raise AssertionError("README requires an OpenAI agent example")
+
+    fake_embeddings = FakeSentenceTransformersModule("sentence_transformers")
+    fake_openai = FakeOpenAIModule()
+    monkeypatch.setitem(sys.modules, "sentence_transformers", fake_embeddings)
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    monkeypatch.chdir(tmp_path)
+    exec(compile(snippet, "README.md", "exec"), {})
+
+    output = capsys.readouterr().out
+    assert output.strip() == "Client X requires SOC 2 for vendor deployments."
+    assert fake_openai.client.responses.model == "gpt-5.6"
+    request = fake_openai.client.responses.input
+    assert request is not None
+    assert "Client X requires SOC 2 for vendor deployments." in request
+
+    from synapticdb import SynapticDB
+
+    with SynapticDB("agent-memory.db", embedding_fn=lambda text: (1.0, 0.0)) as memories:
+        stored = memories.recall("completed exchange", top_k=2)
+    assert any("Assistant: Client X requires SOC 2" in memory.content for memory in stored.memories)
 
 
 def test_readme_confidence_example_runs_verbatim() -> None:

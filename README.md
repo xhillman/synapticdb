@@ -59,6 +59,45 @@ The database, full-text index, embeddings, associations, and recall history all 
 
 ## Usage
 
+### Add memory to an OpenAI response
+
+Install the OpenAI Python SDK and set `OPENAI_API_KEY` in your environment:
+
+```console
+pip install "synapticdb[embeddings]" openai
+export OPENAI_API_KEY="your-api-key"
+```
+
+The example retrieves memory for `user_input`, adds the memory to the OpenAI request, and stores the completed exchange:
+
+```python
+from openai import OpenAI
+from synapticdb import SynapticDB
+
+client = OpenAI()
+user_input = "What does Client X require for vendor deployments?"
+
+with SynapticDB("agent-memory.db") as memories:
+    memories.store("Client X requires SOC 2 for vendor deployments.")
+    recalled = memories.recall(user_input, top_k=3)
+    context = "\n".join(memory.content for memory in recalled.memories)
+
+    response = client.responses.create(
+        model="gpt-5.6",
+        input=(
+            "Use the memory below to answer the user.\n\n"
+            f"Memory:\n{context}\n\n"
+            f"User: {user_input}"
+        ),
+    )
+    answer = response.output_text
+    print(answer)
+
+    memories.store(f"User: {user_input}\nAssistant: {answer}")
+```
+
+The `OpenAI` client reads `OPENAI_API_KEY` from the environment. See the [OpenAI API quickstart](https://developers.openai.com/api/docs/quickstart) for key setup.
+
 ### Return nothing when evidence is weak
 
 `min_confidence` filters results before SynapticDB records retrieval learning. A recall can return fewer than `top_k` memories, including none.
