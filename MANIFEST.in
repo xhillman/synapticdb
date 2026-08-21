@@ -1,1 +1,2 @@
 recursive-include bench *.json *.jsonl *.md *.py
+prune tests
